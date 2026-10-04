@@ -83,12 +83,112 @@ namespace TheFighter
             DrawFighterPanel(new Rect(Screen.width - panelWidth - margin, margin, panelWidth, panelHeight),
                 Director.Enemy);
 
+            DrawRoundBanner();
             DrawTouchZones();
             DrawCrosshair();
             DrawHitReadout();
             DrawCount();
             DrawResult();
             DrawControls();
+        }
+
+        // ------------------------------------------------------------------
+        // Round clock and cards
+        // ------------------------------------------------------------------
+
+        void DrawRoundBanner()
+        {
+            if (Director.Phase == MatchPhase.Finished)
+            {
+                return;
+            }
+
+            float w = 280f * _scale;
+            float h = 56f * _scale;
+            Rect area = new Rect((Screen.width - w) * 0.5f, 0f, w, h);
+
+            GUI.color = new Color(0f, 0f, 0f, 0.5f);
+            GUI.DrawTexture(area, Texture2D.whiteTexture);
+            GUI.color = Color.white;
+
+            string top;
+            string bottom;
+
+            switch (Director.Phase)
+            {
+                case MatchPhase.Opening:
+                    top = "ROUND 1";
+                    bottom = "SECONDS OUT";
+                    break;
+                case MatchPhase.Rest:
+                    top = "REST  " + Mathf.Max(0, Mathf.CeilToInt(Director.PhaseRemaining));
+                    bottom = "ROUND " + (Director.CurrentRound + 1) + " NEXT";
+                    break;
+                default:
+                    top = Clock(Director.PhaseRemaining);
+                    bottom = "ROUND " + Director.CurrentRound + " / " + Director.TotalRounds;
+                    break;
+            }
+
+            GUI.Label(new Rect(area.x, area.y + 4f * _scale, area.width, 28f * _scale), top, _mid);
+
+            GUIStyle sub = new GUIStyle(_small);
+            sub.alignment = TextAnchor.MiddleCenter;
+            GUI.Label(new Rect(area.x, area.y + 32f * _scale, area.width, 18f * _scale), bottom, sub);
+
+            if (Director.Phase == MatchPhase.Rest)
+            {
+                DrawScorecard(area.yMax + 8f * _scale);
+            }
+        }
+
+        /// Three cards, read out the way a ring announcer would. Being behind on them with one
+        /// round to go is the whole point of having them.
+        void DrawScorecard(float top)
+        {
+            Scorecard card = Director.Card;
+            if (card == null || card.RoundsScored == 0)
+            {
+                return;
+            }
+
+            float w = 280f * _scale;
+            float rowHeight = 20f * _scale;
+            float h = rowHeight * (card.JudgeCount + 1) + 10f * _scale;
+            Rect area = new Rect((Screen.width - w) * 0.5f, top, w, h);
+
+            GUI.color = new Color(0f, 0f, 0f, 0.5f);
+            GUI.DrawTexture(area, Texture2D.whiteTexture);
+            GUI.color = Color.white;
+
+            GUIStyle row = new GUIStyle(_small);
+            row.alignment = TextAnchor.MiddleCenter;
+
+            float y = area.y + 5f * _scale;
+            GUI.Label(new Rect(area.x, y, area.width, rowHeight),
+                "AFTER " + card.RoundsScored + " ROUND" + (card.RoundsScored == 1 ? "" : "S"), row);
+            y += rowHeight;
+
+            for (int i = 0; i < card.JudgeCount; i++)
+            {
+                int player = card.PlayerTotal(i);
+                int enemy = card.EnemyTotal(i);
+
+                GUIStyle style = new GUIStyle(row);
+                style.normal.textColor = player > enemy ? new Color(0.5f, 1f, 0.6f)
+                    : enemy > player ? new Color(1f, 0.55f, 0.55f)
+                    : Color.white;
+
+                GUI.Label(new Rect(area.x, y, area.width, rowHeight),
+                    card.JudgeAt(i).Name + "    " + player + " - " + enemy, style);
+                y += rowHeight;
+            }
+        }
+
+        static string Clock(float seconds)
+        {
+            int total = Mathf.Max(0, Mathf.CeilToInt(seconds));
+            return (total / 60) + ":" + (total % 60).ToString("00");
         }
 
         // ------------------------------------------------------------------
@@ -309,19 +409,38 @@ namespace TheFighter
 
         void DrawResult()
         {
-            if (!Director.MatchOver || Director.Winner == null)
+            if (!Director.MatchOver)
             {
                 return;
             }
 
-            bool playerWon = Director.Winner == Director.Player;
-            GUIStyle style = new GUIStyle(_banner);
-            style.normal.textColor = playerWon ? new Color(0.4f, 1f, 0.55f) : new Color(1f, 0.4f, 0.4f);
+            MatchDecision decision = Director.Decision;
+            bool playerWon = !decision.IsDraw && Director.Winner == Director.Player;
 
-            GUI.Label(new Rect(0f, Screen.height * 0.40f, Screen.width, 50f * _scale),
-                playerWon ? "WIN BY KO" : "LOSE BY KO", style);
-            GUI.Label(new Rect(0f, Screen.height * 0.40f + 54f * _scale, Screen.width, 26f * _scale),
-                "press R for another fight", _mid);
+            GUIStyle headline = new GUIStyle(_mid);
+            headline.normal.textColor = new Color(0.95f, 0.9f, 0.6f);
+
+            GUIStyle verdict = new GUIStyle(_banner);
+            verdict.normal.textColor = decision.IsDraw ? Color.white
+                : playerWon ? new Color(0.4f, 1f, 0.55f)
+                : new Color(1f, 0.4f, 0.4f);
+
+            float y = Screen.height * 0.30f;
+            GUI.Label(new Rect(0f, y, Screen.width, 28f * _scale), decision.Headline, headline);
+            y += 30f * _scale;
+
+            string text = decision.IsDraw ? "DRAW" : (playerWon ? "YOU WIN" : "YOU LOSE");
+            GUI.Label(new Rect(0f, y, Screen.width, 50f * _scale), text, verdict);
+            y += 52f * _scale;
+
+            // A knockout does not go to the cards.
+            if (decision.Kind != DecisionKind.Knockout)
+            {
+                DrawScorecard(y);
+                y += 24f * _scale * (RoundRules.JudgeCount + 1) + 18f * _scale;
+            }
+
+            GUI.Label(new Rect(0f, y, Screen.width, 26f * _scale), "press R for another fight", _mid);
         }
 
         void DrawControls()

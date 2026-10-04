@@ -26,6 +26,9 @@ namespace TheFighter
 
         public event System.Action<HitEvent> Landed;
         public event System.Action<Fighter, PunchDefinition> Whiffed;
+        /// Fires the moment a punch starts. Volume is a judging criterion, so the scorecard needs
+        /// to count what was thrown, not only what landed.
+        public event System.Action<Fighter, PunchDefinition> Threw;
         public event System.Action<Fighter> Downed;
         public event System.Action<Fighter> KnockedOut;
 
@@ -34,7 +37,10 @@ namespace TheFighter
         public float Stamina { get; private set; }
         public float MaxStamina { get; private set; }
         public float GuardGauge { get; private set; }
+        /// Knockdowns in the current round - three of them is a TKO, as the three-knockdown rule
+        /// actually works. Across the whole fight they only cost you points.
         public int Knockdowns { get; private set; }
+        public int TotalKnockdowns { get; private set; }
 
         public ActionState State { get; private set; }
         public bool IsGuarding { get; private set; }
@@ -134,6 +140,7 @@ namespace TheFighter
             Stamina = MaxStamina;
             GuardGauge = CombatTuning.GuardGaugeMax;
             Knockdowns = 0;
+            TotalKnockdowns = 0;
             State = ActionState.Free;
             ActivePunch = null;
             PunchTrack = 0f;
@@ -154,6 +161,57 @@ namespace TheFighter
             _comboTimer = 0f;
             _comboStacks = 0;
             Motor.Stop();
+        }
+
+        /// Answering the bell: the three-knockdown count starts fresh and nothing carries over
+        /// from the last round except how hurt and how tired you are.
+        public void BeginRound()
+        {
+            Knockdowns = 0;
+            CancelPunch();
+            State = ActionState.Free;
+            IsGuarding = false;
+            IsDodging = false;
+            GuardBroken = false;
+            _guardHeldTime = 0f;
+            _guardBreakTimer = 0f;
+            _counterWindowTimer = 0f;
+            _dodgeTimer = 0f;
+            _dodgeCooldownTimer = 0f;
+            _staggerTimer = 0f;
+            _downTimer = 0f;
+            _comboTimer = 0f;
+            _comboStacks = 0;
+            Motor.Stop();
+        }
+
+        /// A minute on the stool, compressed. Gas comes back most, damage barely - and the corner
+        /// gets less out of you the deeper the fight goes, so the late rounds are where fights are
+        /// actually lost. Endurance is what you are buying when you train it.
+        public void RecoverInCorner(int roundsCompleted, int totalRounds)
+        {
+            float fade = totalRounds > 1
+                ? 1f - RoundRules.RestHealthFade * ((float)roundsCompleted / totalRounds)
+                : 1f;
+
+            float staminaFloor = MaxStamina * Mathf.Clamp01(RoundRules.RestStaminaRatio
+                + Stats.Endurance * RoundRules.RestStaminaPerEndurance);
+            Stamina = Mathf.Max(Stamina, staminaFloor);
+
+            float heal = MaxHealth * (RoundRules.RestHealthRatio
+                + Stats.Endurance * RoundRules.RestHealthPerEndurance) * Mathf.Max(0.15f, fade);
+
+            Health = Mathf.Min(MaxHealth,
+                Mathf.Max(Health + heal, MaxHealth * RoundRules.CornerMinHealthRatio));
+
+            GuardGauge = CombatTuning.GuardGaugeMax;
+
+            // Caught by the bell on the canvas: the count stops and the corner gets you up.
+            if (State == ActionState.Down)
+            {
+                State = ActionState.Free;
+                _downTimer = 0f;
+            }
         }
 
         public void SetFirstPerson(bool enabled)
@@ -436,6 +494,11 @@ namespace TheFighter
             ActiveHand = punch.Hand;
             _punchLanded = false;
             EnterPhase(ActionState.Windup, punch.WindupTime * PunchSpeedScale());
+
+            if (Threw != null)
+            {
+                Threw(this, punch);
+            }
         }
 
         /// Speed owns the outgoing half of a punch.
@@ -753,6 +816,7 @@ namespace TheFighter
         void Knockdown()
         {
             Knockdowns++;
+            TotalKnockdowns++;
             CancelPunch();
             IsGuarding = false;
             IsDodging = false;

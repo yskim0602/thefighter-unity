@@ -28,6 +28,12 @@ namespace TheFighter
             Touch
         }
 
+        [Header("Distance")]
+        /// The career will set this per stage (RoundRules.RoundsForStage); this is the debut.
+        public int Rounds = RoundRules.DebutRounds;
+        public float RoundSeconds = RoundRules.RoundSeconds;
+        public float RestSeconds = RoundRules.RestSeconds;
+
         [Header("View")]
         public FightCamera.CameraMode StartingView = FightCamera.CameraMode.Broadcast;
 
@@ -100,6 +106,9 @@ namespace TheFighter
             director.Player = player;
             director.Enemy = enemy;
             director.Feedback = feedback;
+            director.TotalRounds = Mathf.Max(1, Rounds);
+            director.RoundSeconds = RoundSeconds;
+            director.RestSeconds = RestSeconds;
 
             FightHud hud = directorGo.AddComponent<FightHud>();
             hud.Director = director;

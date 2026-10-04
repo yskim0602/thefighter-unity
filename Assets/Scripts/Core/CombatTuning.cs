@@ -52,6 +52,9 @@ namespace TheFighter
         // --- Knockdowns ----------------------------------------------------
         public const float KnockdownRecoveryTime = 3.0f;
         public const float GetUpHealthRatio = 0.35f;
+        /// Knockdowns in a single round that end it as a TKO. This is the three-knockdown rule as
+        /// it really works - the count resets each round, so across a long fight knockdowns cost
+        /// you the scorecard rather than the fight.
         public const int MaxKnockdowns = 3;
         /// Seconds shaved off the count per punch-button mash.
         public const float MashRecoveryPerPress = 0.25f;

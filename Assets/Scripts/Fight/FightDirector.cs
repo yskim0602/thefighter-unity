@@ -2,18 +2,39 @@ using UnityEngine;
 
 namespace TheFighter
 {
-    /// Owns the match: places the fighters, routes every landed punch to the feedback layer, and
-    /// ends things on a knockout. The career layer will later hand it an accepted offer and read
-    /// the result back out; for now it just restarts on R.
+    public enum MatchPhase
+    {
+        Opening,
+        Round,
+        Rest,
+        Finished
+    }
+
+    /// Runs the match as a real bout rather than a death match: opening bell, rounds on a clock,
+    /// a corner in between, and a verdict at the end that can be a knockout, a decision on three
+    /// judges' cards, or a draw.
+    ///
+    /// Distance is a field, not a constant, because that is how the career will make a title fight
+    /// feel different from your debut - see RoundRules.RoundsForStage.
     public class FightDirector : MonoBehaviour
     {
         public Fighter Player;
         public Fighter Enemy;
         public ImpactFeedback Feedback;
 
-        public bool MatchOver { get; private set; }
+        [Header("Distance")]
+        public int TotalRounds = RoundRules.DebutRounds;
+        public float RoundSeconds = RoundRules.RoundSeconds;
+        public float RestSeconds = RoundRules.RestSeconds;
+
+        public MatchPhase Phase { get; private set; }
+        public int CurrentRound { get; private set; }
+        public float PhaseRemaining { get; private set; }
+        public Scorecard Card { get; private set; }
+        public MatchDecision Decision { get; private set; }
         public Fighter Winner { get; private set; }
-        public float FightTime { get; private set; }
+
+        public bool MatchOver { get { return Phase == MatchPhase.Finished; } }
         public HitEvent LastHit { get; private set; }
         public float LastHitAge { get { return Time.unscaledTime - _lastHitTime; } }
 
@@ -34,49 +55,143 @@ namespace TheFighter
             Subscribe(Player);
             Subscribe(Enemy);
 
-            StartFight();
-        }
-
-        void Update()
-        {
-            if (!MatchOver)
-            {
-                FightTime += Time.deltaTime;
-            }
-
-            if (Input.GetKeyDown(KeyCode.R))
-            {
-                StartFight();
-            }
+            StartMatch();
         }
 
         void Subscribe(Fighter fighter)
         {
             fighter.Landed += OnLanded;
             fighter.Whiffed += OnWhiffed;
+            fighter.Threw += OnThrew;
             fighter.KnockedOut += OnKnockedOut;
         }
 
-        public void StartFight()
+        // ------------------------------------------------------------------
+        // Match flow
+        // ------------------------------------------------------------------
+
+        public void StartMatch()
         {
-            MatchOver = false;
-            Winner = null;
-            FightTime = 0f;
             Time.timeScale = 1f;
 
+            Card = new Scorecard();
+            Card.NewMatch();
+
+            CurrentRound = 0;
+            Winner = null;
+            Decision = new MatchDecision();
+
+            PlaceFighters();
+            Player.ResetForFight();
+            Enemy.ResetForFight();
+            Player.FightActive = false;
+            Enemy.FightActive = false;
+
+            EnterPhase(MatchPhase.Opening, RoundRules.OpeningSeconds);
+        }
+
+        void PlaceFighters()
+        {
             Vector3 toEnemy = _enemySpawn - _playerSpawn;
             toEnemy.y = 0f;
             toEnemy.Normalize();
 
-            Player.GetComponent<FighterMotor>().Teleport(_playerSpawn, Quaternion.LookRotation(toEnemy, Vector3.up));
-            Enemy.GetComponent<FighterMotor>().Teleport(_enemySpawn, Quaternion.LookRotation(-toEnemy, Vector3.up));
+            Player.GetComponent<FighterMotor>().Teleport(_playerSpawn,
+                Quaternion.LookRotation(toEnemy, Vector3.up));
+            Enemy.GetComponent<FighterMotor>().Teleport(_enemySpawn,
+                Quaternion.LookRotation(-toEnemy, Vector3.up));
+        }
 
-            Player.ResetForFight();
-            Enemy.ResetForFight();
+        void Update()
+        {
+            if (Input.GetKeyDown(KeyCode.R))
+            {
+                StartMatch();
+                return;
+            }
 
+            if (Phase == MatchPhase.Finished)
+            {
+                return;
+            }
+
+            PhaseRemaining -= Time.deltaTime;
+            if (PhaseRemaining > 0f)
+            {
+                return;
+            }
+
+            switch (Phase)
+            {
+                case MatchPhase.Opening:
+                    BeginRound(1);
+                    break;
+                case MatchPhase.Round:
+                    RingBell();
+                    break;
+                case MatchPhase.Rest:
+                    BeginRound(CurrentRound + 1);
+                    break;
+            }
+        }
+
+        void EnterPhase(MatchPhase phase, float seconds)
+        {
+            Phase = phase;
+            PhaseRemaining = seconds;
+        }
+
+        void BeginRound(int round)
+        {
+            CurrentRound = round;
+
+            Player.BeginRound();
+            Enemy.BeginRound();
             Player.FightActive = true;
             Enemy.FightActive = true;
+
+            EnterPhase(MatchPhase.Round, RoundSeconds);
         }
+
+        void RingBell()
+        {
+            Player.FightActive = false;
+            Enemy.FightActive = false;
+
+            Card.ScoreRound();
+
+            if (CurrentRound >= TotalRounds)
+            {
+                FinishByDecision();
+                return;
+            }
+
+            // The bell saves whoever was on the canvas; it still cost them the round.
+            Player.RecoverInCorner(CurrentRound, TotalRounds);
+            Enemy.RecoverInCorner(CurrentRound, TotalRounds);
+
+            EnterPhase(MatchPhase.Rest, RestSeconds);
+        }
+
+        void FinishByDecision()
+        {
+            MatchDecision decision = Card.Decide();
+            Decision = decision;
+            Winner = decision.IsDraw ? null : (decision.PlayerWon ? Player : Enemy);
+            Finish();
+        }
+
+        void Finish()
+        {
+            Phase = MatchPhase.Finished;
+            PhaseRemaining = 0f;
+            Player.FightActive = false;
+            Enemy.FightActive = false;
+        }
+
+        // ------------------------------------------------------------------
+        // Feeding the card
+        // ------------------------------------------------------------------
 
         void OnLanded(HitEvent evt)
         {
@@ -87,6 +202,46 @@ namespace TheFighter
             {
                 Feedback.Report(evt);
             }
+
+            if (Phase != MatchPhase.Round || Card == null)
+            {
+                return;
+            }
+
+            Scorecard.Tally attacker = evt.Attacker == Player ? Card.Player : Card.Enemy;
+            Scorecard.Tally defender = evt.Defender == Player ? Card.Player : Card.Enemy;
+
+            switch (evt.Result)
+            {
+                case HitResult.Clean:
+                    attacker.Landed++;
+                    attacker.Damage += evt.Damage;
+                    if (evt.CausedKnockdown)
+                    {
+                        attacker.KnockdownsScored++;
+                        defender.KnockdownsSuffered++;
+                    }
+                    break;
+
+                case HitResult.Blocked:
+                    defender.Blocked++;
+                    break;
+
+                case HitResult.Dodged:
+                    defender.Slipped++;
+                    break;
+            }
+        }
+
+        void OnThrew(Fighter fighter, PunchDefinition punch)
+        {
+            if (Phase != MatchPhase.Round || Card == null)
+            {
+                return;
+            }
+
+            Scorecard.Tally tally = fighter == Player ? Card.Player : Card.Enemy;
+            tally.Thrown++;
         }
 
         void OnWhiffed(Fighter fighter, PunchDefinition punch)
@@ -99,10 +254,14 @@ namespace TheFighter
 
         void OnKnockedOut(Fighter fighter)
         {
-            MatchOver = true;
             Winner = fighter == Player ? Enemy : Player;
-            Player.FightActive = false;
-            Enemy.FightActive = false;
+
+            MatchDecision decision = new MatchDecision();
+            decision.Kind = DecisionKind.Knockout;
+            decision.PlayerWon = Winner == Player;
+            Decision = decision;
+
+            Finish();
         }
     }
 }
