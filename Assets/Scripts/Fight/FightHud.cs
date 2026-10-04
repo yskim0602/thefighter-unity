@@ -16,6 +16,7 @@ namespace TheFighter
         public FightDirector Director;
         public FightCamera CameraRig;
         public TouchBrain Touch;
+        public ImpactFeedback Feedback;
 
         public bool ShowTouchOverlay = true;
 
@@ -75,6 +76,8 @@ namespace TheFighter
             _scale = Mathf.Clamp(Screen.height / 720f, 1f, 3f);
             BuildStyles();
 
+            DrawDamageFlash();
+
             float panelWidth = 330f * _scale;
             float panelHeight = 146f * _scale;
             float margin = 16f * _scale;
@@ -90,6 +93,21 @@ namespace TheFighter
             DrawCount();
             DrawResult();
             DrawControls();
+        }
+
+        /// In a ringside view the camera is not on your face, so a hit you took has to be felt some
+        /// other way. A red wash over the whole screen is the cheapest honest way to say "that was
+        /// you". Replace with a vignette shader when there is a render pipeline to put it in.
+        void DrawDamageFlash()
+        {
+            if (Feedback == null || Feedback.DamageFlash <= 0.001f)
+            {
+                return;
+            }
+
+            GUI.color = new Color(0.75f, 0.05f, 0.05f, Mathf.Clamp01(Feedback.DamageFlash) * 0.42f);
+            GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height), Texture2D.whiteTexture);
+            GUI.color = Color.white;
         }
 
         // ------------------------------------------------------------------

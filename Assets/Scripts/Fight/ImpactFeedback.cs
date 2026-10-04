@@ -11,6 +11,13 @@ namespace TheFighter
         public FightCamera CameraRig;
         public Fighter Player;
 
+        [Header("Taking damage")]
+        public float FlashDecayPerSecond = 2.6f;
+
+        /// 0-1. The HUD paints this over the screen when the player eats one, which is how you
+        /// feel a hit in a third-person view where the camera is not on your face.
+        public float DamageFlash { get; private set; }
+
         AudioSource _source;
         AudioClip _clean;
         AudioClip _blocked;
@@ -40,6 +47,8 @@ namespace TheFighter
                     Time.timeScale = 1f;
                 }
             }
+
+            DamageFlash = Mathf.MoveTowards(DamageFlash, 0f, FlashDecayPerSecond * Time.unscaledDeltaTime);
         }
 
         void OnDisable()
@@ -60,24 +69,35 @@ namespace TheFighter
             {
                 case HitResult.Clean:
                     Freeze(evt.CausedKnockdown ? CombatTuning.HitStopKnockdown : CombatTuning.HitStopClean);
-                    Play(evt.CausedKnockdown ? _down : _clean, 0.75f + weight * 0.35f);
+                    PlayPunch(evt.CausedKnockdown ? _down : _clean, 0.75f + weight * 0.35f, evt.Punch);
                     Shake((playerTookIt ? CombatTuning.CameraShakeTaken : CombatTuning.CameraShakeClean)
                         * (0.6f + weight) * (evt.Counter ? 1.35f : 1f));
+
                     if (CameraRig != null)
                     {
-                        if (playerTookIt)
-                        {
-                            CameraRig.Kick(4f + evt.Damage * 0.22f);
-                        }
+                        // Landing one should be felt too, not only taking one.
+                        CameraRig.Kick(playerTookIt
+                            ? 4f + evt.Damage * 0.22f
+                            : 1.5f + evt.Damage * 0.07f);
                         // Let the broadcast camera crash in on the big moments.
                         CameraRig.PushIn(evt.CausedKnockdown ? 1.15f : (evt.Counter ? 0.45f : 0.2f));
+                    }
+
+                    if (playerTookIt)
+                    {
+                        DamageFlash = Mathf.Max(DamageFlash,
+                            evt.CausedKnockdown ? 1f : 0.25f + weight * 0.5f);
                     }
                     break;
 
                 case HitResult.Blocked:
                     Freeze(CombatTuning.HitStopBlocked);
-                    Play(_blocked, 0.55f + weight * 0.3f);
+                    PlayPunch(_blocked, 0.55f + weight * 0.3f, evt.Punch);
                     Shake(CombatTuning.CameraShakeBlocked * (0.6f + weight));
+                    if (playerTookIt)
+                    {
+                        DamageFlash = Mathf.Max(DamageFlash, 0.08f);
+                    }
                     break;
 
                 case HitResult.Dodged:
@@ -116,6 +136,19 @@ namespace TheFighter
                 return;
             }
             _source.pitch = Random.Range(0.92f, 1.08f);
+            _source.PlayOneShot(clip, Mathf.Clamp01(volume));
+        }
+
+        /// A jab and an uppercut should not make the same noise. Pitching by the punch's weight
+        /// gives four distinct sounds out of one synthesised clip.
+        void PlayPunch(AudioClip clip, float volume, PunchDefinition punch)
+        {
+            if (clip == null || _source == null)
+            {
+                return;
+            }
+            float weightPitch = punch != null ? 1.18f - punch.DamageMultiplier * 0.24f : 1f;
+            _source.pitch = Random.Range(0.94f, 1.06f) * weightPitch;
             _source.PlayOneShot(clip, Mathf.Clamp01(volume));
         }
 

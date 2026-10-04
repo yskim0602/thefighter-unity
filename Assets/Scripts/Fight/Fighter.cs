@@ -17,7 +17,7 @@ namespace TheFighter
 
         [Header("Rig")]
         public Transform EyeAnchor;
-        public GloveRig Gloves;
+        public FighterRig Rig;
         public Renderer[] BodyRenderers;
 
         [Header("Match")]
@@ -50,7 +50,7 @@ namespace TheFighter
 
         public PunchDefinition ActivePunch { get; private set; }
         public HandRole ActiveHand { get; private set; }
-        /// -PunchLoadTrack while loading, 0 -> 1 as the glove extends. GloveRig turns this into a pose.
+        /// -PunchLoadTrack while loading, 0 -> 1 as the glove extends. FighterRig turns this into a pose.
         public float PunchTrack { get; private set; }
 
         StyleProfile _profile;
@@ -63,6 +63,7 @@ namespace TheFighter
         float _phaseTimer;
         float _phaseDuration;
         bool _punchLanded;
+        float _recoveryFrom = 1f;
         float _guardHeldTime;
         float _guardBreakTimer;
         float _counterWindowTimer;
@@ -216,9 +217,9 @@ namespace TheFighter
 
         public void SetFirstPerson(bool enabled)
         {
-            if (Gloves != null)
+            if (Rig != null)
             {
-                Gloves.SetFirstPerson(enabled);
+                Rig.SetFirstPerson(enabled);
             }
 
             if (BodyRenderers != null)
@@ -284,7 +285,7 @@ namespace TheFighter
 
             if (!FightActive)
             {
-                RefreshGloves(dt);
+                RefreshRig(dt);
                 return;
             }
 
@@ -294,7 +295,7 @@ namespace TheFighter
 
             if (State == ActionState.KnockedOut)
             {
-                RefreshGloves(dt);
+                RefreshRig(dt);
                 return;
             }
 
@@ -308,7 +309,7 @@ namespace TheFighter
                 {
                     GetUp();
                 }
-                RefreshGloves(dt);
+                RefreshRig(dt);
                 return;
             }
 
@@ -476,13 +477,31 @@ namespace TheFighter
 
         void HandlePunchInput(FighterIntent intent)
         {
-            if (!intent.ThrowPunch || State != ActionState.Free || IsDodging)
+            if (!intent.ThrowPunch || IsDodging)
             {
                 return;
             }
 
             PunchDefinition punch = PunchLibrary.Get(intent.Punch);
+
+            // Combos have to flow. The second punch of a one-two starts before the first hand is
+            // all the way back - but only with the *other* hand, so one glove cannot machine-gun,
+            // and it costs extra gas. That one rule is what turns single punches into boxing.
+            bool cancelling = State == ActionState.Recovery
+                && ActivePunch != null
+                && punch.Hand != ActivePunch.Hand
+                && _phaseTimer / _phaseDuration >= CombatTuning.ComboCancelFraction;
+
+            if (State != ActionState.Free && !cancelling)
+            {
+                return;
+            }
+
             float cost = punch.StaminaCost * (1f + _comboStacks * CombatTuning.ComboStaminaScaling);
+            if (cancelling)
+            {
+                cost *= CombatTuning.ComboCancelStaminaMultiplier;
+            }
 
             Stamina = Mathf.Max(0f, Stamina - cost);
             _comboStacks = Mathf.Min(CombatTuning.ComboMaxStacks, _comboStacks + 1);
@@ -535,7 +554,7 @@ namespace TheFighter
             if (ActivePunch == null)
             {
                 PunchTrack = 0f;
-                RefreshGloves(dt);
+                RefreshRig(dt);
                 return;
             }
 
@@ -554,7 +573,7 @@ namespace TheFighter
                 {
                     // Never let a short punch skip past full extension without a hit test.
                     PunchTrack = 1f;
-                    RefreshGloves(0f);
+                    RefreshRig(0f);
                     if (!_punchLanded)
                     {
                         TryLand();
@@ -564,6 +583,7 @@ namespace TheFighter
                         Whiffed(this, ActivePunch);
                     }
 
+                    _recoveryFrom = 1f;
                     EnterPhase(ActionState.Recovery, ActivePunch.RecoveryTime * RecoveryScale());
                     _phaseTimer = carry;
                 }
@@ -576,17 +596,26 @@ namespace TheFighter
             if (ActivePunch == null)
             {
                 PunchTrack = 0f;
-                RefreshGloves(dt);
+                RefreshRig(dt);
                 return;
             }
 
             float p = Mathf.Clamp01(_phaseTimer / _phaseDuration);
             PunchTrack = TrackForPhase(p);
-            RefreshGloves(dt);
+            RefreshRig(dt);
 
             if (State == ActionState.Strike && !_punchLanded && PunchTrack >= CombatTuning.PunchHitTrackThreshold)
             {
                 TryLand();
+
+                // A fist stops when it hits something. Cutting the strike short on contact is what
+                // makes the hit read as impact rather than the glove sailing through, and it hands
+                // the puncher their guard back sooner - a small reward for landing.
+                if (_punchLanded)
+                {
+                    _recoveryFrom = PunchTrack;
+                    EnterPhase(ActionState.Recovery, ActivePunch.RecoveryTime * RecoveryScale());
+                }
             }
         }
 
@@ -600,7 +629,8 @@ namespace TheFighter
                     // Snappy out: most of the travel happens in the first third of the window.
                     return Mathf.Lerp(-CombatTuning.PunchLoadTrack, 1f, Mathf.Pow(p, 0.55f));
                 case ActionState.Recovery:
-                    return Mathf.Lerp(1f, 0f, p * p);
+                    // From wherever the glove actually stopped, not always full extension.
+                    return Mathf.Lerp(_recoveryFrom, 0f, p * p);
                 default:
                     return 0f;
             }
@@ -626,11 +656,11 @@ namespace TheFighter
             _phaseDuration = 0f;
         }
 
-        void RefreshGloves(float dt)
+        void RefreshRig(float dt)
         {
-            if (Gloves != null)
+            if (Rig != null)
             {
-                Gloves.Refresh(dt);
+                Rig.Refresh(dt);
             }
         }
 
@@ -640,12 +670,12 @@ namespace TheFighter
 
         void TryLand()
         {
-            if (Opponent == null || Gloves == null || ActivePunch == null)
+            if (Opponent == null || Rig == null || ActivePunch == null)
             {
                 return;
             }
 
-            Vector3 point = Gloves.GetGloveWorldPosition(ActiveHand);
+            Vector3 point = Rig.GetGloveWorldPosition(ActiveHand);
             int count = Physics.OverlapSphereNonAlloc(point, ActivePunch.HitRadius, _overlap,
                 ~0, QueryTriggerInteraction.Collide);
 
@@ -778,7 +808,15 @@ namespace TheFighter
             push.y = 0f;
             if (push.sqrMagnitude > 0.0001f)
             {
-                Motor.AddImpulse(push.normalized * (damage * CombatTuning.KnockbackPerDamage));
+                push.Normalize();
+                Motor.AddImpulse(push * (damage * CombatTuning.KnockbackPerDamage));
+            }
+
+            // A blocked punch still moves you, just far less than one that got through.
+            if (Rig != null && evt.Result != HitResult.Dodged)
+            {
+                float reactionDamage = evt.Result == HitResult.Blocked ? damage * 2.2f : damage;
+                Rig.PlayHitReaction(zone, reactionDamage, push);
             }
 
             if (Health <= 0f)

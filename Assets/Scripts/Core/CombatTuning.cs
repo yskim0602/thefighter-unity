@@ -17,6 +17,14 @@ namespace TheFighter
         public const float ComboStaminaScaling = 0.25f;
         public const int ComboMaxStacks = 4;
 
+        // --- Combos --------------------------------------------------------
+        /// How far into a punch's recovery the next one may start. Only the other hand may cancel,
+        /// so a one-two flows while a single glove cannot machine-gun - the whole difference
+        /// between throwing punches and boxing.
+        public const float ComboCancelFraction = 0.55f;
+        /// Cutting your own recovery short costs extra gas.
+        public const float ComboCancelStaminaMultiplier = 1.35f;
+
         // --- Guard ---------------------------------------------------------
         public const float BlockDamageMultiplier = 0.22f;
         /// Body shots slip past a high guard far more easily than head shots.
@@ -47,7 +55,7 @@ namespace TheFighter
         /// A body shot drains gas instead of reliably opening a stagger.
         public const float BodyStaminaDamageMultiplier = 0.9f;
         /// Metres per second of shove added per point of damage that gets through.
-        public const float KnockbackPerDamage = 0.045f;
+        public const float KnockbackPerDamage = 0.085f;
 
         // --- Knockdowns ----------------------------------------------------
         public const float KnockdownRecoveryTime = 3.0f;

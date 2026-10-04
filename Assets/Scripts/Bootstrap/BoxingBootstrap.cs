@@ -114,6 +114,7 @@ namespace TheFighter
             hud.Director = director;
             hud.CameraRig = rig;
             hud.Touch = touchBrain;
+            hud.Feedback = feedback;
         }
 
         /// The touch zones assume a landscape phone, and 60fps is the difference between a punch
@@ -217,31 +218,40 @@ namespace TheFighter
             root.AddComponent<FighterMotor>();
             Fighter fighter = root.AddComponent<Fighter>();
 
-            Renderer legs = BuildPart(root.transform, PrimitiveType.Capsule, "Legs",
+            // Everything visible hangs off one pivot so leaning, recoil and the knockdown pose are
+            // a single transform's worth of work. It sits at the root's origin, which is why every
+            // pose value in FighterRig is still measured from the feet.
+            GameObject pivot = new GameObject("BodyPivot");
+            pivot.transform.SetParent(root.transform, false);
+
+            Renderer legs = BuildPart(pivot.transform, PrimitiveType.Capsule, "Legs",
                 new Vector3(0f, 0.32f, 0f), new Vector3(0.40f, 0.32f, 0.40f), bodyColor * 0.75f);
-            Renderer torso = BuildPart(root.transform, PrimitiveType.Capsule, "Torso",
+            Renderer torso = BuildPart(pivot.transform, PrimitiveType.Capsule, "Torso",
                 new Vector3(0f, 1.00f, 0f), new Vector3(0.62f, 0.48f, 0.50f), bodyColor);
-            Renderer head = BuildPart(root.transform, PrimitiveType.Sphere, "Head",
+            Renderer head = BuildPart(pivot.transform, PrimitiveType.Sphere, "Head",
                 new Vector3(0f, 1.58f, 0f), Vector3.one * 0.32f, new Color(0.85f, 0.72f, 0.62f));
 
             fighter.BodyRenderers = new Renderer[] { legs, torso, head };
 
             GameObject eye = new GameObject("EyeAnchor");
-            eye.transform.SetParent(root.transform, false);
+            eye.transform.SetParent(pivot.transform, false);
             eye.transform.localPosition = new Vector3(0f, 1.62f, 0.08f);
             fighter.EyeAnchor = eye.transform;
 
-            Transform leftGlove = BuildPart(root.transform, PrimitiveType.Sphere, "GloveLeft",
+            Transform leftGlove = BuildPart(pivot.transform, PrimitiveType.Sphere, "GloveLeft",
                 new Vector3(-0.24f, 1.32f, 0.30f), Vector3.one * 0.25f, GloveColor).transform;
-            Transform rightGlove = BuildPart(root.transform, PrimitiveType.Sphere, "GloveRight",
+            Transform rightGlove = BuildPart(pivot.transform, PrimitiveType.Sphere, "GloveRight",
                 new Vector3(0.24f, 1.32f, 0.30f), Vector3.one * 0.25f, GloveColor).transform;
 
-            GloveRig gloves = root.AddComponent<GloveRig>();
-            gloves.Owner = fighter;
-            gloves.LeftGlove = leftGlove;
-            gloves.RightGlove = rightGlove;
-            fighter.Gloves = gloves;
+            FighterRig rig = root.AddComponent<FighterRig>();
+            rig.Owner = fighter;
+            rig.BodyPivot = pivot.transform;
+            rig.Head = head.transform;
+            rig.LeftGlove = leftGlove;
+            rig.RightGlove = rightGlove;
+            fighter.Rig = rig;
 
+            // Hurtboxes stay on the root: where you can be hit should not swing around with a lean.
             BuildHeadHurtbox(root.transform, fighter);
             BuildBodyHurtbox(root.transform, fighter);
 
