@@ -2,23 +2,48 @@ using UnityEngine;
 
 namespace TheFighter
 {
-    /// First person is the default view - it is the one the prototype exists to test. The body
-    /// always squares up to the opponent on its own, so the mouse only moves the *head*: pitch
-    /// picks head or body as your target, yaw is a small clamped lean that never fights the
-    /// auto-facing.
+    /// The default view is a broadcast camera: it sits ringside behind the player and drifts
+    /// slowly along an arc, the way a real operator repositions, instead of locking to one angle.
+    /// It breathes in when the fighters close and shoves in on a knockdown.
+    ///
+    /// The arc is deliberately bounded rather than a full orbit. Footwork is expressed relative to
+    /// the opponent, so if the camera swung behind the enemy the player's "circle left" would read
+    /// as right on screen. Staying on one side keeps the controls honest - which is also what
+    /// ringside cameras do.
+    ///
+    /// First person stays available on V for testing, and keeps the mouse-pitch aim the keyboard
+    /// brain reads. Touch supplies its own aim, so nothing here is required on a phone.
     public class FightCamera : MonoBehaviour
     {
+        public enum CameraMode
+        {
+            Broadcast,
+            FirstPerson
+        }
+
         public Camera View;
         public Fighter Player;
         public Fighter Enemy;
 
         [Header("View")]
-        public bool FirstPerson = true;
-        public float FieldOfView = 62f;
-        public float ThirdPersonDistance = 3.4f;
-        public float ThirdPersonHeight = 2.05f;
+        public CameraMode Mode = CameraMode.Broadcast;
+        public float FieldOfView = 58f;
 
-        [Header("Mouse")]
+        [Header("Broadcast arc")]
+        /// Degrees either side of straight-behind-the-player the camera is allowed to wander.
+        public float OrbitRange = 32f;
+        public float OrbitSpeed = 7f;
+        public float OrbitDwell = 2.2f;
+        public float NearDistance = 2.45f;
+        public float FarDistance = 3.95f;
+        public float Height = 1.95f;
+        public float HeightDrift = 0.18f;
+        public float LookHeight = 1.28f;
+        public float PositionSmoothTime = 0.45f;
+        public float RotationSmoothing = 6f;
+
+        [Header("Mouse (keyboard play only)")]
+        public bool MouseLook = true;
         public float Sensitivity = 2.4f;
         public float MinPitch = -28f;
         public float MaxPitch = 14f;
@@ -27,13 +52,28 @@ namespace TheFighter
         [Header("Feel")]
         public float ShakeDecay = 7f;
         public float KickDecay = 9f;
+        public float PushDecay = 1.8f;
 
         float _pitch;
         float _yaw;
         float _shake;
         float _fovKick;
+        float _push;
+
+        float _orbit;
+        float _orbitTarget;
+        float _orbitVelocity;
+        float _dwellTimer;
+        float _heightPhase;
+        Vector3 _positionVelocity;
+
+        public bool FirstPerson
+        {
+            get { return Mode == CameraMode.FirstPerson; }
+        }
 
         /// 0 = the punch goes to the body, 1 = to the head. Look down to dig to the body.
+        /// Only the keyboard brain reads this; TouchBrain decides aim from where you tap.
         public float AimHeight
         {
             get { return Mathf.InverseLerp(-20f, -3f, _pitch); }
@@ -50,22 +90,44 @@ namespace TheFighter
                 View.nearClipPlane = 0.04f;
                 View.fieldOfView = FieldOfView;
             }
+
+            _heightPhase = Random.value * 10f;
+            PickOrbitTarget();
         }
 
         void Start()
         {
-            ApplyViewMode();
-            LockCursor(true);
+            ApplyMode();
+            if (MouseLook)
+            {
+                LockCursor(true);
+            }
         }
 
         void Update()
         {
+            float dt = Time.unscaledDeltaTime;
+
             if (Input.GetKeyDown(KeyCode.V))
             {
-                FirstPerson = !FirstPerson;
-                ApplyViewMode();
+                Mode = Mode == CameraMode.Broadcast ? CameraMode.FirstPerson : CameraMode.Broadcast;
+                ApplyMode();
             }
 
+            if (MouseLook)
+            {
+                UpdateMouse();
+            }
+
+            _shake = Mathf.MoveTowards(_shake, 0f, ShakeDecay * dt);
+            _fovKick = Mathf.MoveTowards(_fovKick, 0f, KickDecay * dt);
+            _push = Mathf.MoveTowards(_push, 0f, PushDecay * dt);
+
+            UpdateOrbit(dt);
+        }
+
+        void UpdateMouse()
+        {
             if (Input.GetKeyDown(KeyCode.Escape))
             {
                 LockCursor(false);
@@ -75,15 +137,39 @@ namespace TheFighter
                 LockCursor(true);
             }
 
-            if (CursorLocked)
+            if (!CursorLocked)
             {
-                _pitch = Mathf.Clamp(_pitch - Input.GetAxisRaw("Mouse Y") * Sensitivity, MinPitch, MaxPitch);
-                _yaw = Mathf.Clamp(_yaw + Input.GetAxisRaw("Mouse X") * Sensitivity, -MaxYawOffset, MaxYawOffset);
-                _yaw = Mathf.MoveTowards(_yaw, 0f, 22f * Time.unscaledDeltaTime);
+                return;
             }
 
-            _shake = Mathf.MoveTowards(_shake, 0f, ShakeDecay * Time.unscaledDeltaTime);
-            _fovKick = Mathf.MoveTowards(_fovKick, 0f, KickDecay * Time.unscaledDeltaTime);
+            _pitch = Mathf.Clamp(_pitch - Input.GetAxisRaw("Mouse Y") * Sensitivity, MinPitch, MaxPitch);
+            _yaw = Mathf.Clamp(_yaw + Input.GetAxisRaw("Mouse X") * Sensitivity, -MaxYawOffset, MaxYawOffset);
+            _yaw = Mathf.MoveTowards(_yaw, 0f, 22f * Time.unscaledDeltaTime);
+        }
+
+        void UpdateOrbit(float dt)
+        {
+            _dwellTimer -= dt;
+            _orbit = Mathf.SmoothDamp(_orbit, _orbitTarget, ref _orbitVelocity, 1.6f, OrbitSpeed, dt);
+
+            if (_dwellTimer <= 0f && Mathf.Abs(_orbit - _orbitTarget) < 2.5f)
+            {
+                PickOrbitTarget();
+            }
+
+            _heightPhase += dt * 0.35f;
+        }
+
+        void PickOrbitTarget()
+        {
+            // Always move somewhere meaningfully different, so the drift never stalls mid-arc.
+            float pick = Random.Range(-OrbitRange, OrbitRange);
+            if (Mathf.Abs(pick - _orbit) < OrbitRange * 0.5f)
+            {
+                pick = -Mathf.Sign(_orbit) * Random.Range(OrbitRange * 0.4f, OrbitRange);
+            }
+            _orbitTarget = Mathf.Clamp(pick, -OrbitRange, OrbitRange);
+            _dwellTimer = OrbitDwell * Random.Range(0.7f, 1.5f);
         }
 
         void LateUpdate()
@@ -93,13 +179,13 @@ namespace TheFighter
                 return;
             }
 
-            if (FirstPerson)
+            if (Mode == CameraMode.FirstPerson)
             {
                 PlaceFirstPerson();
             }
             else
             {
-                PlaceThirdPerson();
+                PlaceBroadcast();
             }
 
             if (_shake > 0.0001f)
@@ -115,33 +201,67 @@ namespace TheFighter
             Transform eye = Player.EyeAnchor != null ? Player.EyeAnchor : Player.transform;
             View.transform.position = eye.position;
             View.transform.rotation = Player.transform.rotation * Quaternion.Euler(-_pitch, _yaw, 0f);
+            _positionVelocity = Vector3.zero;
         }
 
-        void PlaceThirdPerson()
+        void PlaceBroadcast()
         {
             Vector3 playerPos = Player.transform.position;
-            Vector3 enemyPos = Enemy != null ? Enemy.transform.position : playerPos + Player.transform.forward * 2f;
+            Vector3 enemyPos = Enemy != null ? Enemy.transform.position : playerPos + Player.transform.forward * 1.6f;
 
             Vector3 mid = (playerPos + enemyPos) * 0.5f;
-            Vector3 away = playerPos - enemyPos;
-            away.y = 0f;
-            if (away.sqrMagnitude < 0.0001f)
-            {
-                away = -Player.transform.forward;
-            }
-            away.Normalize();
 
-            Vector3 target = mid + away * ThirdPersonDistance + Vector3.up * ThirdPersonHeight;
-            View.transform.position = Vector3.Lerp(View.transform.position, target,
-                1f - Mathf.Exp(-9f * Time.unscaledDeltaTime));
-            View.transform.rotation = Quaternion.LookRotation((mid + Vector3.up * 1.15f) - View.transform.position);
+            Vector3 toEnemy = enemyPos - playerPos;
+            toEnemy.y = 0f;
+            float separation = toEnemy.magnitude;
+            if (separation < 0.0001f)
+            {
+                toEnemy = Player.transform.forward;
+                separation = 1f;
+            }
+            toEnemy /= Mathf.Max(0.0001f, separation);
+
+            float distance = Mathf.Lerp(NearDistance, FarDistance,
+                Mathf.InverseLerp(0.7f, 2.2f, separation)) - _push;
+            distance = Mathf.Max(1.4f, distance);
+
+            Vector3 behind = Quaternion.AngleAxis(_orbit, Vector3.up) * -toEnemy;
+            float height = Height + Mathf.Sin(_heightPhase) * HeightDrift - _push * 0.25f;
+
+            Vector3 target = mid + behind * distance + Vector3.up * Mathf.Max(0.6f, height);
+            View.transform.position = Vector3.SmoothDamp(View.transform.position, target,
+                ref _positionVelocity, PositionSmoothTime, Mathf.Infinity, Time.unscaledDeltaTime);
+
+            Vector3 look = mid + Vector3.up * LookHeight;
+            Fighter down = DownedFighter();
+            if (down != null)
+            {
+                look = Vector3.Lerp(look, down.transform.position + Vector3.up * 0.5f, 0.6f);
+            }
+
+            Quaternion wanted = Quaternion.LookRotation(look - View.transform.position, Vector3.up);
+            View.transform.rotation = Quaternion.Slerp(View.transform.rotation, wanted,
+                1f - Mathf.Exp(-RotationSmoothing * Time.unscaledDeltaTime));
         }
 
-        void ApplyViewMode()
+        Fighter DownedFighter()
+        {
+            if (Player != null && (Player.State == ActionState.Down || Player.State == ActionState.KnockedOut))
+            {
+                return Player;
+            }
+            if (Enemy != null && (Enemy.State == ActionState.Down || Enemy.State == ActionState.KnockedOut))
+            {
+                return Enemy;
+            }
+            return null;
+        }
+
+        void ApplyMode()
         {
             if (Player != null)
             {
-                Player.SetFirstPerson(FirstPerson);
+                Player.SetFirstPerson(Mode == CameraMode.FirstPerson);
             }
         }
 
@@ -153,6 +273,12 @@ namespace TheFighter
         public void Kick(float degrees)
         {
             _fovKick = Mathf.Max(_fovKick, degrees);
+        }
+
+        /// Shoves the broadcast camera in closer for a moment - knockdowns, big counters.
+        public void PushIn(float metres)
+        {
+            _push = Mathf.Max(_push, metres);
         }
 
         static bool CursorLocked

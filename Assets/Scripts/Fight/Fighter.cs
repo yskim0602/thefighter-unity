@@ -435,12 +435,24 @@ namespace TheFighter
             ActivePunch = punch;
             ActiveHand = punch.Hand;
             _punchLanded = false;
-            EnterPhase(ActionState.Windup, Mathf.Max(0.02f, punch.WindupTime * TimingScale()));
+            EnterPhase(ActionState.Windup, punch.WindupTime * PunchSpeedScale());
         }
 
-        float TimingScale()
+        /// Speed owns the outgoing half of a punch.
+        float PunchSpeedScale()
         {
-            float scale = Stats.TimingScale;
+            float scale = Stats.PunchSpeedScale;
+            if (IsExhausted)
+            {
+                scale *= CombatTuning.ExhaustedTimingMultiplier;
+            }
+            return scale;
+        }
+
+        /// Skill owns getting the hand back, and the style's conditioning tightens it further.
+        float RecoveryScale()
+        {
+            float scale = Stats.RecoveryScale / Mathf.Max(0.5f, _profile.Stamina);
             if (IsExhausted)
             {
                 scale *= CombatTuning.ExhaustedTimingMultiplier;
@@ -472,7 +484,7 @@ namespace TheFighter
 
                 if (State == ActionState.Windup)
                 {
-                    EnterPhase(ActionState.Strike, ActivePunch.StrikeTime * TimingScale());
+                    EnterPhase(ActionState.Strike, ActivePunch.StrikeTime * PunchSpeedScale());
                     _phaseTimer = carry;
                 }
                 else if (State == ActionState.Strike)
@@ -489,8 +501,7 @@ namespace TheFighter
                         Whiffed(this, ActivePunch);
                     }
 
-                    float recovery = ActivePunch.RecoveryTime * TimingScale() / Mathf.Max(0.5f, _profile.Stamina);
-                    EnterPhase(ActionState.Recovery, recovery);
+                    EnterPhase(ActionState.Recovery, ActivePunch.RecoveryTime * RecoveryScale());
                     _phaseTimer = carry;
                 }
                 else

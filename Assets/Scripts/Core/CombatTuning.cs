@@ -74,6 +74,14 @@ namespace TheFighter
         /// viewmodel pose from changing where a punch actually lands.
         public const float PunchHitTrackThreshold = 0.55f;
 
+        // --- HUD -----------------------------------------------------------
+        /// Health bars are drawn against this rather than normalised to each fighter, so an
+        /// endurance tank visibly carries a longer bar than a quick one. Raise it as the career
+        /// pushes stats higher.
+        public const float HealthBarReference = 260f;
+        /// Even the frailest fighter keeps a readable bar.
+        public const float HealthBarMinFraction = 0.34f;
+
         // --- Ring ----------------------------------------------------------
         public const float RingHalfExtent = 3.1f;
         public const float MinFighterSeparation = 0.62f;

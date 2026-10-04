@@ -19,8 +19,20 @@ namespace TheFighter
         public FighterStats OpponentStats = new FighterStats(11, 11, 11, 11);
         [Range(0f, 1f)] public float OpponentSkill = 0.55f;
 
+        public enum ControlScheme
+        {
+            /// Touch on a phone, keyboard everywhere else.
+            Auto,
+            KeyboardMouse,
+            /// Forcing this in the editor lets the mouse stand in for a finger.
+            Touch
+        }
+
         [Header("View")]
-        public bool StartInFirstPerson = true;
+        public FightCamera.CameraMode StartingView = FightCamera.CameraMode.Broadcast;
+
+        [Header("Controls")]
+        public ControlScheme Controls = ControlScheme.Auto;
 
         [Header("Look")]
         public Color PlayerColor = new Color(0.22f, 0.42f, 0.78f);
@@ -31,6 +43,10 @@ namespace TheFighter
 
         void Awake()
         {
+            bool useTouch = Controls == ControlScheme.Touch
+                || (Controls == ControlScheme.Auto && Application.isMobilePlatform);
+
+            ConfigureDisplay();
             BuildEnvironment();
 
             Fighter player = BuildFighter(PlayerName, new Vector3(0f, 0.05f, -0.75f),
@@ -55,15 +71,25 @@ namespace TheFighter
             rig.View = camera;
             rig.Player = player;
             rig.Enemy = enemy;
-            rig.FirstPerson = StartInFirstPerson;
+            rig.Mode = StartingView;
+            rig.MouseLook = !useTouch;
 
             ImpactFeedback feedback = cameraGo.AddComponent<ImpactFeedback>();
             feedback.CameraRig = rig;
             feedback.Player = player;
 
-            PlayerBrain playerBrain = player.gameObject.AddComponent<PlayerBrain>();
-            playerBrain.CameraRig = rig;
-            player.SetBrain(playerBrain);
+            TouchBrain touchBrain = null;
+            if (useTouch)
+            {
+                touchBrain = player.gameObject.AddComponent<TouchBrain>();
+                player.SetBrain(touchBrain);
+            }
+            else
+            {
+                PlayerBrain playerBrain = player.gameObject.AddComponent<PlayerBrain>();
+                playerBrain.CameraRig = rig;
+                player.SetBrain(playerBrain);
+            }
 
             AIBrain enemyBrain = enemy.gameObject.AddComponent<AIBrain>();
             enemyBrain.Skill = OpponentSkill;
@@ -78,6 +104,26 @@ namespace TheFighter
             FightHud hud = directorGo.AddComponent<FightHud>();
             hud.Director = director;
             hud.CameraRig = rig;
+            hud.Touch = touchBrain;
+        }
+
+        /// The touch zones assume a landscape phone, and 60fps is the difference between a punch
+        /// reading as crisp or as mush.
+        static void ConfigureDisplay()
+        {
+            Application.targetFrameRate = 60;
+
+            if (!Application.isMobilePlatform)
+            {
+                return;
+            }
+
+            Screen.sleepTimeout = SleepTimeout.NeverSleep;
+            Screen.autorotateToLandscapeLeft = true;
+            Screen.autorotateToLandscapeRight = true;
+            Screen.autorotateToPortrait = false;
+            Screen.autorotateToPortraitUpsideDown = false;
+            Screen.orientation = ScreenOrientation.AutoRotation;
         }
 
         // ------------------------------------------------------------------

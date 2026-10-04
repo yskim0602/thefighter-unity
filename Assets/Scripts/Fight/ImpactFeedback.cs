@@ -63,9 +63,14 @@ namespace TheFighter
                     Play(evt.CausedKnockdown ? _down : _clean, 0.75f + weight * 0.35f);
                     Shake((playerTookIt ? CombatTuning.CameraShakeTaken : CombatTuning.CameraShakeClean)
                         * (0.6f + weight) * (evt.Counter ? 1.35f : 1f));
-                    if (playerTookIt && CameraRig != null)
+                    if (CameraRig != null)
                     {
-                        CameraRig.Kick(4f + evt.Damage * 0.22f);
+                        if (playerTookIt)
+                        {
+                            CameraRig.Kick(4f + evt.Damage * 0.22f);
+                        }
+                        // Let the broadcast camera crash in on the big moments.
+                        CameraRig.PushIn(evt.CausedKnockdown ? 1.15f : (evt.Counter ? 0.45f : 0.2f));
                     }
                     break;
 
