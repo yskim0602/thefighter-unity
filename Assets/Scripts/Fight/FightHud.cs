@@ -18,6 +18,17 @@ namespace TheFighter
         public TouchBrain Touch;
         public ImpactFeedback Feedback;
 
+        public enum HudMode
+        {
+            /// Everything, for balance work.
+            Full,
+            /// Thin bars and the clock, for actually watching the fight.
+            Minimal,
+            /// Nothing, for looking at the ring.
+            Off
+        }
+
+        public HudMode Mode = HudMode.Full;
         public bool ShowTouchOverlay = true;
 
         static readonly Color HealthColor = new Color(0.86f, 0.22f, 0.22f);
@@ -65,6 +76,14 @@ namespace TheFighter
             _banner.alignment = TextAnchor.MiddleCenter;
         }
 
+        void Update()
+        {
+            if (Input.GetKeyDown(KeyCode.H))
+            {
+                Mode = (HudMode)(((int)Mode + 1) % 3);
+            }
+        }
+
         void OnGUI()
         {
             if (Director == null || Director.Player == null || Director.Enemy == null)
@@ -76,15 +95,31 @@ namespace TheFighter
             _scale = Mathf.Clamp(Screen.height / 720f, 1f, 3f);
             BuildStyles();
 
+            // The flash is impact, not interface, so it survives even with the HUD off.
             DrawDamageFlash();
 
-            float panelWidth = 330f * _scale;
-            float panelHeight = 146f * _scale;
+            if (Mode == HudMode.Off)
+            {
+                return;
+            }
+
             float margin = 16f * _scale;
 
-            DrawFighterPanel(new Rect(margin, margin, panelWidth, panelHeight), Director.Player);
-            DrawFighterPanel(new Rect(Screen.width - panelWidth - margin, margin, panelWidth, panelHeight),
-                Director.Enemy);
+            if (Mode == HudMode.Full)
+            {
+                float panelWidth = 330f * _scale;
+                float panelHeight = 146f * _scale;
+                DrawFighterPanel(new Rect(margin, margin, panelWidth, panelHeight), Director.Player);
+                DrawFighterPanel(new Rect(Screen.width - panelWidth - margin, margin, panelWidth, panelHeight),
+                    Director.Enemy);
+            }
+            else
+            {
+                float width = 200f * _scale;
+                float height = 44f * _scale;
+                DrawMiniPanel(new Rect(margin, margin, width, height), Director.Player);
+                DrawMiniPanel(new Rect(Screen.width - width - margin, margin, width, height), Director.Enemy);
+            }
 
             DrawRoundBanner();
             DrawTouchZones();
@@ -92,7 +127,38 @@ namespace TheFighter
             DrawHitReadout();
             DrawCount();
             DrawResult();
-            DrawControls();
+
+            if (Mode == HudMode.Full)
+            {
+                DrawControls();
+            }
+        }
+
+        /// Name, the health bar still drawn to scale, and a sliver of stamina. Nothing else.
+        void DrawMiniPanel(Rect area, Fighter fighter)
+        {
+            GUI.color = new Color(0f, 0f, 0f, 0.4f);
+            GUI.DrawTexture(area, Texture2D.whiteTexture);
+            GUI.color = Color.white;
+
+            float pad = 7f * _scale;
+            float x = area.x + pad;
+            float y = area.y + 4f * _scale;
+            float w = area.width - pad * 2f;
+
+            GUI.Label(new Rect(x, y, w, 15f * _scale), fighter.FighterName, _small);
+            y += 16f * _scale;
+
+            float pool = Mathf.Clamp(fighter.MaxHealth / CombatTuning.HealthBarReference,
+                CombatTuning.HealthBarMinFraction, 1f);
+
+            GUI.color = new Color(1f, 1f, 1f, 0.08f);
+            GUI.DrawTexture(new Rect(x, y, w, 9f * _scale), Texture2D.whiteTexture);
+            GUI.color = Color.white;
+
+            Bar(new Rect(x, y, w * pool, 9f * _scale), fighter.HealthRatio, HealthColor);
+            y += 11f * _scale;
+            Bar(new Rect(x, y, w * 0.8f, 5f * _scale), fighter.StaminaRatio, StaminaColor);
         }
 
         /// In a ringside view the camera is not on your face, so a hit you took has to be felt some
@@ -475,7 +541,7 @@ namespace TheFighter
             else
             {
                 line1 = "WASD step / circle     J or LMB jab     K or RMB straight     I or Q hook     O or E uppercut";
-                line2 = "Shift (hold) guard     Space slip     mouse aims (look down = body)     V view     R restart     Esc free cursor";
+                line2 = "Shift (hold) guard     Space slip     mouse aims (look down = body)     V view     H hud     R restart     Esc free cursor";
             }
 
             float h = 44f * _scale;

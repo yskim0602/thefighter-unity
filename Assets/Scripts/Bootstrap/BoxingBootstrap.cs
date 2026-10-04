@@ -224,14 +224,18 @@ namespace TheFighter
             GameObject pivot = new GameObject("BodyPivot");
             pivot.transform.SetParent(root.transform, false);
 
-            Renderer legs = BuildPart(pivot.transform, PrimitiveType.Capsule, "Legs",
-                new Vector3(0f, 0.32f, 0f), new Vector3(0.40f, 0.32f, 0.40f), bodyColor * 0.75f);
+            // Two legs rather than one block, so the rig can shuffle them. FighterRig repositions
+            // both every frame; these are just starting points.
+            Renderer leadLeg = BuildPart(pivot.transform, PrimitiveType.Capsule, "LegLead",
+                new Vector3(-0.13f, 0.32f, 0.17f), new Vector3(0.19f, 0.30f, 0.19f), bodyColor * 0.72f);
+            Renderer rearLeg = BuildPart(pivot.transform, PrimitiveType.Capsule, "LegRear",
+                new Vector3(0.15f, 0.32f, -0.17f), new Vector3(0.19f, 0.30f, 0.19f), bodyColor * 0.72f);
             Renderer torso = BuildPart(pivot.transform, PrimitiveType.Capsule, "Torso",
                 new Vector3(0f, 1.00f, 0f), new Vector3(0.62f, 0.48f, 0.50f), bodyColor);
             Renderer head = BuildPart(pivot.transform, PrimitiveType.Sphere, "Head",
                 new Vector3(0f, 1.58f, 0f), Vector3.one * 0.32f, new Color(0.85f, 0.72f, 0.62f));
 
-            fighter.BodyRenderers = new Renderer[] { legs, torso, head };
+            fighter.BodyRenderers = new Renderer[] { leadLeg, rearLeg, torso, head };
 
             GameObject eye = new GameObject("EyeAnchor");
             eye.transform.SetParent(pivot.transform, false);
@@ -249,6 +253,8 @@ namespace TheFighter
             rig.Head = head.transform;
             rig.LeftGlove = leftGlove;
             rig.RightGlove = rightGlove;
+            rig.LeadLeg = leadLeg.transform;
+            rig.RearLeg = rearLeg.transform;
             fighter.Rig = rig;
 
             // Hurtboxes stay on the root: where you can be hit should not swing around with a lean.

@@ -80,7 +80,7 @@ namespace TheFighter
             AimHeight = 1f;
         }
 
-        FighterMotor Motor
+        public FighterMotor Motor
         {
             get
             {

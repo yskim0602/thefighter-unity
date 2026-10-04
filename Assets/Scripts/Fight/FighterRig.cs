@@ -27,6 +27,8 @@ namespace TheFighter
         public Transform Head;
         public Transform LeftGlove;
         public Transform RightGlove;
+        public Transform LeadLeg;
+        public Transform RearLeg;
 
         [Header("Third person rest poses (right-hand values, mirrored by stance)")]
         public Vector3 ThirdPersonIdleLead = new Vector3(0.24f, 1.32f, 0.34f);
@@ -61,6 +63,23 @@ namespace TheFighter
         public float RecoilSeconds = 0.20f;
         public float StaggerLean = 9f;
 
+        [Header("Footwork - placeholder shuffle, not a stride")]
+        /// A boxer's feet never cross and never leave the floor for long: they shuffle, and the
+        /// bladed stance keeps the lead foot forward. Right-hand values, mirrored by stance.
+        public Vector3 LeadLegPose = new Vector3(0.13f, 0.32f, 0.17f);
+        public Vector3 RearLegPose = new Vector3(0.15f, 0.32f, -0.17f);
+        public float StepRate = 2.6f;
+        public float StepLift = 0.06f;
+        public float StepSlide = 0.09f;
+
+        [Header("Weight and breathing")]
+        /// Nothing alive is ever perfectly still, and that is most of why capsules read as props.
+        public float IdleBobHeight = 0.012f;
+        public float IdleBobRate = 0.9f;
+        public float MoveBobHeight = 0.030f;
+        public float MoveBobRate = 2.8f;
+        public float WeightShiftDegrees = 5f;
+
         [Header("Knockdown")]
         public Vector3 DownPosition = new Vector3(0f, -0.72f, -0.08f);
         public Vector3 DownRotation = new Vector3(24f, 0f, 10f);
@@ -77,6 +96,8 @@ namespace TheFighter
         Quaternion _headBaseRotation = Quaternion.identity;
 
         float _downBlend;
+        float _stepPhase;
+        float _bobPhase;
         float _recoilTimer;
         float _recoilDuration;
         Vector3 _recoilPush;
@@ -182,9 +203,50 @@ namespace TheFighter
             }
 
             Capture();
-            UpdateBody(deltaTime);
+
+            Vector2 move = Vector2.zero;
+            if (Owner.Motor != null)
+            {
+                move = Owner.Motor.LocalMove / Mathf.Max(0.1f, Owner.Stats.MoveSpeed);
+                move = Vector2.ClampMagnitude(move, 1f);
+            }
+
+            UpdateBody(deltaTime, move);
+            UpdateLegs(deltaTime, move);
             UpdateHand(HandRole.Lead, deltaTime);
             UpdateHand(HandRole.Rear, deltaTime);
+        }
+
+        void UpdateLegs(float deltaTime, Vector2 move)
+        {
+            float effort = move.magnitude;
+            _stepPhase += deltaTime * StepRate * effort * Mathf.PI * 2f;
+
+            Vector3 direction = new Vector3(move.x, 0f, move.y);
+            if (direction.sqrMagnitude > 0.0001f)
+            {
+                direction.Normalize();
+            }
+
+            float fade = 1f - _downBlend;
+            PoseLeg(LeadLeg, LeadLegPose, SideSign(HandRole.Lead),
+                Mathf.Sin(_stepPhase), effort * fade, direction);
+            PoseLeg(RearLeg, RearLegPose, SideSign(HandRole.Rear),
+                Mathf.Sin(_stepPhase + Mathf.PI), effort * fade, direction);
+        }
+
+        void PoseLeg(Transform leg, Vector3 pose, float sign, float wave, float effort, Vector3 direction)
+        {
+            if (leg == null)
+            {
+                return;
+            }
+
+            Vector3 stance = new Vector3(pose.x * sign, pose.y, pose.z);
+            Vector3 slide = direction * (wave * StepSlide * effort);
+            slide.y = Mathf.Max(0f, wave) * StepLift * effort;
+
+            leg.localPosition = stance + slide;
         }
 
         void UpdateHand(HandRole role, float deltaTime)
@@ -267,7 +329,7 @@ namespace TheFighter
         // Body pose: commitment, recoil, knockdown
         // ------------------------------------------------------------------
 
-        void UpdateBody(float deltaTime)
+        void UpdateBody(float deltaTime, Vector2 move)
         {
             if (BodyPivot == null)
             {
@@ -288,6 +350,16 @@ namespace TheFighter
 
             Vector3 position = Vector3.zero;
             Vector3 angles = Vector3.zero;
+
+            // Breathing at rest, bouncing on the toes when moving. Without it two capsules read
+            // as scenery no matter what else the rig does.
+            float effort = move.magnitude;
+            _bobPhase += deltaTime * Mathf.Lerp(IdleBobRate, MoveBobRate, effort) * Mathf.PI * 2f;
+            position.y += Mathf.Sin(_bobPhase) * Mathf.Lerp(IdleBobHeight, MoveBobHeight, effort);
+
+            // Roll into the circle, lean into a step forward.
+            angles.z -= move.x * WeightShiftDegrees;
+            angles.x += move.y * 2f;
 
             PunchDefinition punch = Owner.ActivePunch;
             if (punch != null)

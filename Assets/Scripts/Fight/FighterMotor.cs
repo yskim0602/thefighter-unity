@@ -21,6 +21,29 @@ namespace TheFighter
             _controller = GetComponent<CharacterController>();
         }
 
+        /// Footwork in body space: x circles, y steps in and out. The rig reads this to drive the
+        /// step cycle, so the feet move because the fighter moved rather than on their own timer.
+        public Vector2 LocalMove
+        {
+            get
+            {
+                Vector3 flat = _velocity;
+                flat.y = 0f;
+                Vector3 local = transform.InverseTransformDirection(flat);
+                return new Vector2(local.x, local.z);
+            }
+        }
+
+        public float PlanarSpeed
+        {
+            get
+            {
+                Vector3 flat = _velocity;
+                flat.y = 0f;
+                return flat.magnitude;
+            }
+        }
+
         public void FaceTowards(Vector3 worldPoint, float deltaTime)
         {
             Vector3 flat = worldPoint - transform.position;
