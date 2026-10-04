@@ -342,29 +342,70 @@ FirstPersonGloveScale 0.62
 단계는 타격감 수치를 더 만지는 게 아니라 **캐릭터**입니다. 지금 캡슐로 모션을
 평가하는 건 불가능하다는 판단이 맞습니다.
 
-### 실제 캐릭터를 넣는 경로
+### 실제 캐릭터 넣기 — 현재 상태와 남은 작업
 
-Mixamo(Adobe 계정으로 무료)에 리깅된 캐릭터와 복싱 애니메이션이 있습니다.
+애니메이션 레이어(`FighterAnimation.cs`)는 작성되어 있습니다. **Animator Controller를
+손으로 짤 필요가 없습니다** — 씬의 `BoxingBootstrap` 오브젝트에 클립 슬롯이 있고,
+거기에 드래그하면 끝입니다.
 
-1. mixamo.com → 캐릭터 1개 다운로드 (FBX for Unity)
-2. 같은 캐릭터로 애니메이션 검색: `boxing`, `jab`, `hook`, `uppercut`,
-   `fighting idle`, `fighting stance walk` → **Without Skin**으로 다운로드
-3. Unity에 FBX 임포트 → Rig → Animation Type을 **Humanoid**
-4. Animator Controller 생성, `BodyPivot` 자리에 모델을 넣고 `FighterRig`에 연결
+설계상 세 가지를 보장합니다:
 
-**중요한 설계 포인트 두 개** — 지금 구조가 이걸 대비해 만들어져 있습니다:
+- **코드가 타이밍의 주인입니다.** 모든 클립의 재생 시간을 매 프레임 직접 지정합니다
+  (펀치는 `Fighter.PunchProgress`, 자세·풋워크는 누적 루프 시계). Mixamo 클립 길이는
+  우리 선딜/타격/후딜과 무관하므로, 클립이 타이밍을 정하면 사거리·카운터 창·채점
+  가중치가 전부 틀어집니다. 이 방식이면 클립의 Loop Time이나 길이를 건드릴 필요도
+  없습니다
+- **루트 모션은 끕니다** (`applyRootMotion = false`). 위치는 `FighterMotor`가
+  움직이므로, Mixamo의 **In Place 체크를 깜빡해도 문제없습니다**
+- **실패해도 안전합니다.** 슬롯이 비었거나 모델이 Humanoid가 아니면 이 레이어는
+  아무것도 하지 않고 기존 절차적 캡슐 리그로 돌아갑니다
 
-- **애니메이션이 타이밍을 정하지 않습니다. 코드가 정합니다.** Mixamo 클립의
-  길이는 우리 `PunchLibrary`의 선딜/타격/후딜과 안 맞습니다. 클립을 재단하지 말고
-  `animator.Play(clip, layer, normalizedTime)`에 **`Fighter`의 페이즈 진행률을
-  그대로 넣으세요.** 그러면 애니메이션이 코드 타이밍을 따라가고, 지금까지 잡은
-  밸런스·사거리·채점이 전부 그대로 유지됩니다. 반대로 하면 다 틀어집니다.
-- **히트 판정의 접점은 `FighterRig.GetGloveWorldPosition(role)` 하나입니다.**
-  실제 모델이 들어오면 이 함수가 글러브 구 대신 **손 본(bone)의 위치**를
-  돌려주게만 바꾸면 됩니다. `Fighter`의 판정 코드는 손댈 필요가 없습니다.
+#### 1. 아직 필요한 파일
 
-그때까지는 `FighterRig`의 절차적 모션(스텝 셔플, 호흡 바운스, 무게 이동, 피격
-반응, 다운 포즈)이 자리를 지킵니다 — 캡슐이 소품처럼 보이지 않을 만큼만입니다.
+| 받을 것 | Mixamo 위치 | 왜 |
+| --- | --- | --- |
+| **`X Bot.fbx` (캐릭터 본체)** | 상단 **Characters** 탭 → `X Bot` | ⚠️ **필수.** 지금 받은 9개는 전부 `X Bot@동작` = 애니메이션만이라 몸이 없습니다 |
+| `uppercut` | Animations | 펀치 4종 중 유일하게 없음 |
+| `block`, `defensive stance` | Animations | 가드 자세 (없으면 Idle로 대체됨) |
+| `taking punch`, `knocked out` | Animations | 피격·다운 (없으면 절차적 반응이 대신함) |
+
+캐릭터는 Format **FBX for Unity**, Pose **T-pose**. 애니메이션은 **Without Skin**.
+
+#### 2. 슬롯 배치 (받은 클립 기준)
+
+| 슬롯 | 쓸 클립 |
+| --- | --- |
+| Idle | `X Bot@Fighting Idle` |
+| Jab | `X Bot@Lead Jab` |
+| Hook | `X Bot@Hook` |
+| Straight | `X Bot@Body Jab Cross` (콤보지만 크로스가 들어있어 임시로) |
+| Slip | `X Bot@Dodging` |
+| StepSide | `X Bot@Long Left Side Step` |
+| Guard / StepForward / StepBack / Uppercut / Down | 아직 없음 — 비워두면 됩니다 |
+
+`X Bot@Boxing`, `Boxing (1)`, `Boxing (2)`는 내용을 알 수 없습니다. Project 창에서
+클릭하면 인스펙터 **아래쪽 미리보기 창**에서 재생해볼 수 있으니, 보고 맞는 슬롯에
+넣어주세요.
+
+#### 3. Unity에서 연결하기
+
+1. 씬을 열고 Hierarchy에서 **`BoxingBootstrap`** 선택
+2. **Boxer Model** 칸에 `X Bot.fbx`를 드래그
+3. **Animation Clips** 항목을 펼치고 각 슬롯에 클립을 드래그
+   - ⚠️ **FBX 자체가 아니라 그 안의 클립**을 넣어야 합니다. Project 창에서 FBX 왼쪽
+     화살표(▶)를 펼치면 나오는 항목 중 **삼각형 모양 아이콘**이 AnimationClip입니다
+4. **Play** — 모델이 캡슐을 대체하고, 캡슐은 숨겨진 채 폴백으로 남습니다
+
+모델 키가 안 맞으면 `Model Scale`, 바라보는 방향이 틀어졌으면 `Model Yaw Offset`로
+맞추세요.
+
+#### 4. 남는 한계
+
+- **1인칭은 모델과 함께 쓸 수 없습니다.** FP에서는 내 몸을 숨기는데, 모델은 손도 몸의
+  일부라 아무것도 안 보입니다. FPS가 쓰는 별도 팔 모델(viewmodel)이 필요한 문제이고,
+  브로드캐스트 3인칭이 기본이라 당장은 보류합니다
+- 머리 전용 피격 스냅은 모델에서는 빠집니다. 몸 전체 반동·기울기·다운 포즈는
+  `BodyPivot`을 통해 애니메이션 위에 그대로 얹힙니다
 
 ---
 
@@ -385,7 +426,8 @@ Assets/Scripts/
 │   ├── Fighter.cs              #   체력·스태미나·가드게이지, 펀치 상태머신, 피격 처리, 다운/KO
 │   ├── FighterMotor.cs         #   CharacterController 풋워크 + 상대 자동 바라보기 + 링 경계
 │   ├── FighterRig.cs           #   몸 전체 절차 애니메이션: 글러브·스탠스 반전·펀치 궤적
-│   │                           #   + 몸 커밋·피격 반응·다운 포즈
+│   │                           #   + 몸 커밋·피격 반응·다운 포즈·스텝 셔플
+│   ├── FighterAnimation.cs     #   실제 Humanoid 클립 재생 (Playables, 컨트롤러 불필요)
 │   ├── Hurtbox.cs              #   머리 / 몸통 피격 볼륨
 │   ├── TouchBrain.cs           #   터치 제스처 → FighterIntent (모바일 기본)
 │   ├── PlayerBrain.cs          #   키보드·마우스 → FighterIntent (PC 테스트용)

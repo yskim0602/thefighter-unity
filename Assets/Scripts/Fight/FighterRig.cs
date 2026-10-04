@@ -80,6 +80,13 @@ namespace TheFighter
         public float MoveBobRate = 2.8f;
         public float WeightShiftDegrees = 5f;
 
+        [Header("Real model (optional)")]
+        /// Set when a Humanoid model is in. The rest of the rig keeps working either way:
+        /// BodyPivot still carries the lean, recoil and knockdown, layered over the animation.
+        public Animator HandSource;
+        /// Wrist bone to knuckle, plus the glove. Metres.
+        public float HandReachOffset = 0.11f;
+
         [Header("Knockdown")]
         public Vector3 DownPosition = new Vector3(0f, -0.72f, -0.08f);
         public Vector3 DownRotation = new Vector3(24f, 0f, 10f);
@@ -94,6 +101,12 @@ namespace TheFighter
         Quaternion _pivotBaseRotation = Quaternion.identity;
         Vector3 _headBasePosition;
         Quaternion _headBaseRotation = Quaternion.identity;
+
+        bool _handBonesResolved;
+        Transform _leftWrist;
+        Transform _rightWrist;
+        Transform _leftForearm;
+        Transform _rightForearm;
 
         float _downBlend;
         float _stepPhase;
@@ -185,10 +198,68 @@ namespace TheFighter
             return IsLeftHand(role) ? -1f : 1f;
         }
 
+        /// The one seam between the fight and whatever is drawing it. With a real Humanoid model
+        /// this reads the hand bones; without one it falls back to the placeholder glove spheres.
+        /// Fighter's hit detection never has to know which.
         public Vector3 GetGloveWorldPosition(HandRole role)
         {
+            ResolveHandBones();
+
+            bool left = IsLeftHand(role);
+            Transform wrist = left ? _leftWrist : _rightWrist;
+            Transform forearm = left ? _leftForearm : _rightForearm;
+
+            if (wrist != null)
+            {
+                // The bone is the wrist, but the punch lands with the knuckles, so push along the
+                // forearm. Using the forearm direction rather than the bone's own axis keeps this
+                // working whatever convention the rig was exported with.
+                Vector3 direction = forearm != null
+                    ? (wrist.position - forearm.position)
+                    : transform.forward;
+
+                if (direction.sqrMagnitude > 0.000001f)
+                {
+                    direction.Normalize();
+                }
+                else
+                {
+                    direction = transform.forward;
+                }
+
+                return wrist.position + direction * HandReachOffset;
+            }
+
             Transform glove = GloveFor(role);
             return glove != null ? glove.position : transform.position;
+        }
+
+        void ResolveHandBones()
+        {
+            if (_handBonesResolved)
+            {
+                return;
+            }
+
+            if (HandSource == null)
+            {
+                return;
+            }
+
+            _handBonesResolved = true;
+
+            if (!HandSource.isHuman)
+            {
+                Debug.LogWarning("FighterRig: " + HandSource.name
+                    + " has no Humanoid avatar, so hit detection is still using the placeholder gloves. "
+                    + "Set the model's Rig > Animation Type to Humanoid.");
+                return;
+            }
+
+            _leftWrist = HandSource.GetBoneTransform(HumanBodyBones.LeftHand);
+            _rightWrist = HandSource.GetBoneTransform(HumanBodyBones.RightHand);
+            _leftForearm = HandSource.GetBoneTransform(HumanBodyBones.LeftLowerArm);
+            _rightForearm = HandSource.GetBoneTransform(HumanBodyBones.RightLowerArm);
         }
 
         // ------------------------------------------------------------------

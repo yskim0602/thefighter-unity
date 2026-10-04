@@ -53,6 +53,28 @@ namespace TheFighter
         /// -PunchLoadTrack while loading, 0 -> 1 as the glove extends. FighterRig turns this into a pose.
         public float PunchTrack { get; private set; }
 
+        /// Monotonic 0 -> 1 across the whole punch: windup, strike, recovery. An animation clip
+        /// needs this; PunchTrack is a pose curve and runs backwards on the way home.
+        public float PunchProgress
+        {
+            get
+            {
+                if (ActivePunch == null)
+                {
+                    return 0f;
+                }
+
+                float p = _phaseDuration > 0f ? Mathf.Clamp01(_phaseTimer / _phaseDuration) : 1f;
+                switch (State)
+                {
+                    case ActionState.Windup: return p * 0.30f;
+                    case ActionState.Strike: return 0.30f + p * 0.30f;
+                    case ActionState.Recovery: return 0.60f + p * 0.40f;
+                    default: return 0f;
+                }
+            }
+        }
+
         StyleProfile _profile;
         BoxingStyle _baseStyle = BoxingStyle.BoxerPuncher;
         IFighterBrain _brain;

@@ -40,6 +40,16 @@ namespace TheFighter
         [Header("Controls")]
         public ControlScheme Controls = ControlScheme.Auto;
 
+        [Header("Real model (optional - leave empty to spar with capsules)")]
+        /// Drag the Mixamo character FBX here (the one *without* an @ in its name - that is the
+        /// body; the @ files are animations).
+        public GameObject BoxerModel;
+        public float ModelYawOffset;
+        public float ModelScale = 1f;
+        /// Dragged once here and shared by both fighters, because a component added at runtime has
+        /// nowhere of its own to hold Inspector references.
+        public BoxerClipSet AnimationClips = new BoxerClipSet();
+
         [Header("Look")]
         public Color PlayerColor = new Color(0.22f, 0.42f, 0.78f);
         public Color OpponentColor = new Color(0.75f, 0.24f, 0.24f);
@@ -242,10 +252,12 @@ namespace TheFighter
             eye.transform.localPosition = new Vector3(0f, 1.62f, 0.08f);
             fighter.EyeAnchor = eye.transform;
 
-            Transform leftGlove = BuildPart(pivot.transform, PrimitiveType.Sphere, "GloveLeft",
-                new Vector3(-0.24f, 1.32f, 0.30f), Vector3.one * 0.25f, GloveColor).transform;
-            Transform rightGlove = BuildPart(pivot.transform, PrimitiveType.Sphere, "GloveRight",
-                new Vector3(0.24f, 1.32f, 0.30f), Vector3.one * 0.25f, GloveColor).transform;
+            Renderer leftGloveRenderer = BuildPart(pivot.transform, PrimitiveType.Sphere, "GloveLeft",
+                new Vector3(-0.24f, 1.32f, 0.30f), Vector3.one * 0.25f, GloveColor);
+            Renderer rightGloveRenderer = BuildPart(pivot.transform, PrimitiveType.Sphere, "GloveRight",
+                new Vector3(0.24f, 1.32f, 0.30f), Vector3.one * 0.25f, GloveColor);
+            Transform leftGlove = leftGloveRenderer.transform;
+            Transform rightGlove = rightGloveRenderer.transform;
 
             FighterRig rig = root.AddComponent<FighterRig>();
             rig.Owner = fighter;
@@ -261,7 +273,61 @@ namespace TheFighter
             BuildHeadHurtbox(root.transform, fighter);
             BuildBodyHurtbox(root.transform, fighter);
 
+            AttachModel(fighter, rig, pivot.transform, new Renderer[]
+            {
+                leadLeg, rearLeg, torso, head, leftGloveRenderer, rightGloveRenderer
+            });
+
             return fighter;
+        }
+
+        /// Drops a real model under the body pivot and takes over from the capsules. Everything
+        /// else keeps running: the pivot still carries lean, recoil and the knockdown pose, and the
+        /// placeholders stay in the hierarchy (just hidden) as the fallback.
+        void AttachModel(Fighter fighter, FighterRig rig, Transform pivot, Renderer[] placeholders)
+        {
+            if (BoxerModel == null)
+            {
+                return;
+            }
+
+            GameObject model = Instantiate(BoxerModel, pivot);
+            model.name = "Model";
+            model.transform.localPosition = Vector3.zero;
+            model.transform.localRotation = Quaternion.Euler(0f, ModelYawOffset, 0f);
+            model.transform.localScale = Vector3.one * Mathf.Max(0.01f, ModelScale);
+
+            for (int i = 0; i < placeholders.Length; i++)
+            {
+                if (placeholders[i] != null)
+                {
+                    placeholders[i].enabled = false;
+                }
+            }
+
+            // First person hides your own body, which is now the model's renderers.
+            fighter.BodyRenderers = model.GetComponentsInChildren<Renderer>();
+
+            Animator animator = model.GetComponent<Animator>();
+            if (animator == null)
+            {
+                animator = model.GetComponentInChildren<Animator>();
+            }
+
+            if (animator == null)
+            {
+                Debug.LogWarning("BoxingBootstrap: " + BoxerModel.name + " has no Animator, so it "
+                    + "cannot be animated. Select the FBX, set Rig > Animation Type to Humanoid, "
+                    + "Avatar Definition to Create From This Model, and press Apply.");
+                return;
+            }
+
+            rig.HandSource = animator;
+
+            FighterAnimation animation = fighter.gameObject.AddComponent<FighterAnimation>();
+            animation.Owner = fighter;
+            animation.Animator = animator;
+            animation.Clips = AnimationClips;
         }
 
         Renderer BuildPart(Transform parent, PrimitiveType type, string name,
