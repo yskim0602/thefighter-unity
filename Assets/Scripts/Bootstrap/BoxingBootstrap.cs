@@ -46,6 +46,9 @@ namespace TheFighter
         public GameObject BoxerModel;
         public float ModelYawOffset;
         public float ModelScale = 1f;
+        /// The model is measured and rescaled to this, so a wrong FBX unit scale cannot make it
+        /// invisible. Set to 0 to trust the import scale instead.
+        public float ModelTargetHeight = 1.8f;
         /// Dragged once here and shared by both fighters, because a component added at runtime has
         /// nowhere of its own to hold Inspector references.
         public BoxerClipSet AnimationClips = new BoxerClipSet();
@@ -295,7 +298,18 @@ namespace TheFighter
             model.name = "Model";
             model.transform.localPosition = Vector3.zero;
             model.transform.localRotation = Quaternion.Euler(0f, ModelYawOffset, 0f);
-            model.transform.localScale = Vector3.one * Mathf.Max(0.01f, ModelScale);
+            model.transform.localScale = Vector3.one * Mathf.Max(0.0001f, ModelScale);
+
+            Renderer[] modelRenderers = model.GetComponentsInChildren<Renderer>();
+            if (modelRenderers.Length == 0)
+            {
+                Debug.LogWarning("BoxingBootstrap: " + BoxerModel.name + " has no renderers, so "
+                    + "there is nothing to draw. Make sure you dragged the character FBX (the one "
+                    + "WITHOUT an @ in its name) and not an animation-only file.");
+                return;
+            }
+
+            float height = FitHeight(model, modelRenderers);
 
             for (int i = 0; i < placeholders.Length; i++)
             {
@@ -306,13 +320,19 @@ namespace TheFighter
             }
 
             // First person hides your own body, which is now the model's renderers.
-            fighter.BodyRenderers = model.GetComponentsInChildren<Renderer>();
+            fighter.BodyRenderers = modelRenderers;
 
             Animator animator = model.GetComponent<Animator>();
             if (animator == null)
             {
                 animator = model.GetComponentInChildren<Animator>();
             }
+
+            Debug.Log("BoxingBootstrap: attached " + BoxerModel.name + " to " + fighter.FighterName
+                + " - measured height " + height.ToString("0.00") + "m, final scale "
+                + model.transform.localScale.x.ToString("0.000")
+                + ", renderers " + modelRenderers.Length
+                + ", animator " + (animator != null ? (animator.isHuman ? "Humanoid" : "not Humanoid") : "MISSING"));
 
             if (animator == null)
             {
@@ -328,6 +348,37 @@ namespace TheFighter
             animation.Owner = fighter;
             animation.ModelAnimator = animator;
             animation.Clips = AnimationClips;
+        }
+
+        /// Mixamo exports in centimetres. If the FBX importer's unit conversion did not take, the
+        /// model arrives a hundred times too big - the camera ends up inside its ankle and
+        /// backface culling means you see nothing at all, which looks exactly like "the character
+        /// did not spawn". Measuring the thing and scaling it to our fighter's height makes the
+        /// import setting stop mattering.
+        float FitHeight(GameObject model, Renderer[] renderers)
+        {
+            Bounds bounds = renderers[0].bounds;
+            for (int i = 1; i < renderers.Length; i++)
+            {
+                bounds.Encapsulate(renderers[i].bounds);
+            }
+
+            float height = bounds.size.y;
+            if (ModelTargetHeight <= 0f || height <= 0.0001f)
+            {
+                return height;
+            }
+
+            // How far the feet sit below the model's own origin, which is zero for a Mixamo rig
+            // but not for every exporter. Scaling is uniform about that origin, so the gap scales
+            // with it - no need to re-measure once the transform has moved.
+            float footGap = model.transform.position.y - bounds.min.y;
+
+            float correction = ModelTargetHeight / height;
+            model.transform.localScale *= correction;
+            model.transform.localPosition += new Vector3(0f, footGap * correction, 0f);
+
+            return height;
         }
 
         Renderer BuildPart(Transform parent, PrimitiveType type, string name,
