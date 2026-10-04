@@ -49,7 +49,7 @@ namespace TheFighter
     public class FighterAnimation : MonoBehaviour
     {
         public Fighter Owner;
-        public Animator Animator;
+        public Animator ModelAnimator;
         public BoxerClipSet Clips;
 
         [Header("Blending")]
@@ -123,7 +123,7 @@ namespace TheFighter
 
         void Build()
         {
-            if (Animator == null || Owner == null || Clips == null)
+            if (ModelAnimator == null || Owner == null || Clips == null)
             {
                 return;
             }
@@ -136,10 +136,10 @@ namespace TheFighter
 
             // Our motor owns position. Root motion on top of it would move everyone twice, which
             // also means nobody has to remember Mixamo's "In Place" checkbox.
-            Animator.applyRootMotion = false;
+            ModelAnimator.applyRootMotion = false;
 
             _graph = PlayableGraph.Create("FighterAnimation:" + Owner.FighterName);
-            AnimationPlayableOutput output = AnimationPlayableOutput.Create(_graph, "Pose", Animator);
+            AnimationPlayableOutput output = AnimationPlayableOutput.Create(_graph, "Pose", ModelAnimator);
             _mixer = AnimationMixerPlayable.Create(_graph, count, true);
             output.SetSourcePlayable(_mixer);
 

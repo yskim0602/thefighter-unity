@@ -326,7 +326,7 @@ namespace TheFighter
 
             FighterAnimation animation = fighter.gameObject.AddComponent<FighterAnimation>();
             animation.Owner = fighter;
-            animation.Animator = animator;
+            animation.ModelAnimator = animator;
             animation.Clips = AnimationClips;
         }
 
