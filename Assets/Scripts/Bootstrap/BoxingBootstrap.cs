@@ -58,8 +58,11 @@ namespace TheFighter
         /// makes an animated model look boneless.
         [Range(0f, 1f)] public float ModelProceduralMotion;
         /// Dragged once here and shared by both fighters, because a component added at runtime has
-        /// nowhere of its own to hold Inspector references.
-        public BoxerClipSet AnimationClips = new BoxerClipSet();
+        /// nowhere of its own to hold Inspector references. Two sets, because a southpaw needs
+        /// mirrored clips or his punches land on the wrong side of his body - see FighterAnimation.
+        /// Leave the southpaw set empty and nobody is dealt that stance.
+        public BoxerClipSet OrthodoxClips = new BoxerClipSet();
+        public BoxerClipSet SouthpawClips = new BoxerClipSet();
 
         [Header("Look")]
         public Color PlayerColor = new Color(0.22f, 0.42f, 0.78f);
@@ -84,10 +87,23 @@ namespace TheFighter
             player.Opponent = enemy;
             enemy.Opponent = player;
 
+            // A southpaw without mirrored clips would punch with the wrong arm, so the stance is
+            // only dealt once those clips exist. Capsules mirror themselves, so they always can.
+            bool southpawReady = BoxerModel == null
+                || (SouthpawClips != null && SouthpawClips.Idle != null);
+
+            Stance playerStance = PlayerStance;
+            if (playerStance == Stance.Southpaw && !southpawReady)
+            {
+                Debug.LogWarning("BoxingBootstrap: southpaw needs a mirrored clip set (its Idle is "
+                    + "empty), so the player is fighting orthodox for now.");
+                playerStance = Stance.Orthodox;
+            }
+
             // The player never picks a style: whatever they trained decides it.
-            player.Configure(PlayerName, PlayerStats, BoxingStyles.Infer(PlayerStats), PlayerStance);
+            player.Configure(PlayerName, PlayerStats, BoxingStyles.Infer(PlayerStats), playerStance);
             enemy.Configure(OpponentName, OpponentStats, OpponentStyle,
-                Random.value < 0.8f ? Stance.Orthodox : Stance.Southpaw);
+                southpawReady && Random.value > 0.8f ? Stance.Southpaw : Stance.Orthodox);
 
             GameObject cameraGo = new GameObject("FightCamera");
             Camera camera = cameraGo.AddComponent<Camera>();
@@ -364,7 +380,8 @@ namespace TheFighter
             FighterAnimation animation = fighter.gameObject.AddComponent<FighterAnimation>();
             animation.Owner = fighter;
             animation.ModelAnimator = animator;
-            animation.Clips = AnimationClips;
+            animation.OrthodoxClips = OrthodoxClips;
+            animation.SouthpawClips = SouthpawClips;
         }
 
         /// Mixamo exports in centimetres. If the FBX importer's unit conversion did not take, the

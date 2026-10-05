@@ -71,7 +71,16 @@ namespace TheFighter
     {
         public Fighter Owner;
         public Animator ModelAnimator;
-        public BoxerClipSet Clips;
+
+        /// A southpaw's lead hand is the right one, so hit detection reads the right wrist bone
+        /// while an orthodox clip throws the left arm - the animation and the hitbox end up on
+        /// opposite sides of the body. Mirrored clips are not cosmetic; they are what keeps the
+        /// punch landing where it looks like it lands. If the southpaw set is empty the orthodox
+        /// one is used, and Bootstrap stops handing anyone a southpaw stance.
+        public BoxerClipSet OrthodoxClips;
+        public BoxerClipSet SouthpawClips;
+
+        BoxerClipSet _clips;
 
         [Header("Blending")]
         /// Weights are damped rather than set outright. Without this the stance/footwork mix
@@ -129,33 +138,46 @@ namespace TheFighter
             }
         }
 
+        /// Picked once, because a stance is chosen before the bell and never changes mid-fight.
+        public static BoxerClipSet Resolve(Stance stance, BoxerClipSet orthodox, BoxerClipSet southpaw)
+        {
+            bool southpawReady = southpaw != null && southpaw.Idle != null;
+            return stance == Stance.Southpaw && southpawReady ? southpaw : orthodox;
+        }
+
         AnimationClip ClipFor(Slot slot)
         {
-            if (Clips == null)
+            if (_clips == null)
             {
                 return null;
             }
 
             switch (slot)
             {
-                case Slot.Idle: return Clips.Idle;
-                case Slot.Guard: return Clips.Guard;
-                case Slot.StepForward: return Clips.StepForward;
-                case Slot.StepBack: return Clips.StepBack;
-                case Slot.StepSide: return Clips.StepSide;
-                case Slot.Jab: return Clips.Jab;
-                case Slot.Straight: return Clips.Straight;
-                case Slot.Hook: return Clips.Hook;
-                case Slot.Uppercut: return Clips.Uppercut;
-                case Slot.Slip: return Clips.Slip;
-                case Slot.Down: return Clips.Down;
+                case Slot.Idle: return _clips.Idle;
+                case Slot.Guard: return _clips.Guard;
+                case Slot.StepForward: return _clips.StepForward;
+                case Slot.StepBack: return _clips.StepBack;
+                case Slot.StepSide: return _clips.StepSide;
+                case Slot.Jab: return _clips.Jab;
+                case Slot.Straight: return _clips.Straight;
+                case Slot.Hook: return _clips.Hook;
+                case Slot.Uppercut: return _clips.Uppercut;
+                case Slot.Slip: return _clips.Slip;
+                case Slot.Down: return _clips.Down;
                 default: return null;
             }
         }
 
         void Build()
         {
-            if (ModelAnimator == null || Owner == null || Clips == null)
+            if (ModelAnimator == null || Owner == null)
+            {
+                return;
+            }
+
+            _clips = Resolve(Owner.CurrentStance, OrthodoxClips, SouthpawClips);
+            if (_clips == null)
             {
                 return;
             }
@@ -266,7 +288,7 @@ namespace TheFighter
             PunchDefinition punch = Owner.ActivePunch;
             if (punch != null)
             {
-                Vector2 window = Clips.WindowFor(punch.Kind);
+                Vector2 window = _clips.WindowFor(punch.Kind);
                 float start = Mathf.Clamp01(Mathf.Min(window.x, window.y));
                 float end = Mathf.Clamp01(Mathf.Max(window.x, window.y));
                 return Scrub(SlotForPunch(punch.Kind),
