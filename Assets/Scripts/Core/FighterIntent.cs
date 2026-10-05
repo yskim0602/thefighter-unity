@@ -15,6 +15,10 @@ namespace TheFighter
         public PunchKind Punch;
         /// 0 = aiming at the body, 1 = aiming at the head.
         public float AimHeight;
+        /// Head movement. -1 leans left, +1 right. Moves the head hurtbox, not the feet.
+        public float Lean;
+        /// Ducking. Also moves the head hurtbox, so it really does take you under a punch.
+        public bool Crouch;
         /// One pulse per button press while grounded, to beat the count.
         public bool MashGetUp;
 

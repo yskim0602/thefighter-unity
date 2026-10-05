@@ -85,6 +85,16 @@ namespace TheFighter
         /// viewmodel pose from changing where a punch actually lands.
         public const float PunchHitTrackThreshold = 0.55f;
 
+        // --- Head movement -------------------------------------------------
+        // Leaning and ducking move the head hurtbox itself, so slipping a punch is a real miss
+        // rather than a damage modifier. It costs a trickle of gas and some footwork.
+        public const float LeanHeadOffset = 0.19f;
+        public const float CrouchHeadOffset = 0.30f;
+        public const float HeadMoveSpeed = 7f;
+        public const float HeadMoveStaminaDrainPerSecond = 3.5f;
+        public const float CrouchMoveMultiplier = 0.55f;
+        public const float LeanMoveMultiplier = 0.82f;
+
         // --- HUD -----------------------------------------------------------
         /// Health bars are drawn against this rather than normalised to each fighter, so an
         /// endurance tank visibly carries a longer bar than a quick one. Raise it as the career

@@ -44,6 +44,27 @@ namespace TheFighter
         [Header("Reactions")]
         public AnimationClip Slip;
         public AnimationClip Down;
+
+        [Header("Punch clip windows (normalised start, end)")]
+        /// Which slice of a clip a punch maps onto. Mixamo clips are often longer than our punch,
+        /// or are whole combos - "Body Jab Cross" is a left jab followed by a right cross, so a
+        /// window of 0 to 0.6 plays only the jab no matter which slot it sits in. Put the cross in
+        /// Straight with a window of about 0.45 to 1 and the right hand finally throws.
+        public Vector2 JabWindow = new Vector2(0f, 0.6f);
+        public Vector2 StraightWindow = new Vector2(0f, 0.6f);
+        public Vector2 HookWindow = new Vector2(0f, 0.6f);
+        public Vector2 UppercutWindow = new Vector2(0f, 0.6f);
+
+        public Vector2 WindowFor(PunchKind kind)
+        {
+            switch (kind)
+            {
+                case PunchKind.Jab: return JabWindow;
+                case PunchKind.Straight: return StraightWindow;
+                case PunchKind.Hook: return HookWindow;
+                default: return UppercutWindow;
+            }
+        }
     }
 
     public class FighterAnimation : MonoBehaviour
@@ -64,11 +85,6 @@ namespace TheFighter
         public float StepDeadzone = 0.12f;
         public float StepFullSpeed = 0.55f;
 
-        [Header("Punch clips")]
-        /// How much of a punch clip the punch maps onto. Mixamo punches include a long wind-up and
-        /// return, and squeezing all of it into our 0.3s jab looks frantic; 0.5 uses the first half
-        /// at half the speed. Our timing does not change either way - only which frames you see.
-        [Range(0.1f, 1f)] public float PunchClipPortion = 0.6f;
 
         enum Slot
         {
@@ -250,8 +266,11 @@ namespace TheFighter
             PunchDefinition punch = Owner.ActivePunch;
             if (punch != null)
             {
+                Vector2 window = Clips.WindowFor(punch.Kind);
+                float start = Mathf.Clamp01(Mathf.Min(window.x, window.y));
+                float end = Mathf.Clamp01(Mathf.Max(window.x, window.y));
                 return Scrub(SlotForPunch(punch.Kind),
-                    Owner.PunchProgress * Mathf.Clamp01(PunchClipPortion));
+                    Mathf.Lerp(start, end, Owner.PunchProgress));
             }
 
             if (Owner.IsDodging)

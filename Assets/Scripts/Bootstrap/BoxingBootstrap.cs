@@ -28,6 +28,10 @@ namespace TheFighter
             Touch
         }
 
+        [Header("Pace")]
+        /// 1 is the designed pace, higher is slower. One dial for the whole fight.
+        [Range(0.5f, 2.5f)] public float FightTempo = 1f;
+
         [Header("Distance")]
         /// The career will set this per stage (RoundRules.RoundsForStage); this is the debut.
         public int Rounds = RoundRules.DebutRounds;
@@ -52,7 +56,7 @@ namespace TheFighter
         /// How much of the procedural body motion survives once real clips are driving the model.
         /// Kept low: the clips already breathe and lean, and doing both at once is exactly what
         /// makes an animated model look boneless.
-        [Range(0f, 1f)] public float ModelProceduralMotion = 0.15f;
+        [Range(0f, 1f)] public float ModelProceduralMotion;
         /// Dragged once here and shared by both fighters, because a component added at runtime has
         /// nowhere of its own to hold Inspector references.
         public BoxerClipSet AnimationClips = new BoxerClipSet();
@@ -276,9 +280,11 @@ namespace TheFighter
             rig.RearLeg = rearLeg.transform;
             fighter.Rig = rig;
 
-            // Hurtboxes stay on the root: where you can be hit should not swing around with a lean.
-            BuildHeadHurtbox(root.transform, fighter);
+            // Hurtboxes stay off the body pivot so a cosmetic lean cannot move them. Head
+            // movement moves the head box deliberately, through Fighter.
+            fighter.HeadHurtbox = BuildHeadHurtbox(root.transform, fighter);
             BuildBodyHurtbox(root.transform, fighter);
+            fighter.Tempo = FightTempo;
 
             AttachModel(fighter, rig, pivot.transform, new Renderer[]
             {
@@ -405,7 +411,7 @@ namespace TheFighter
             return go.GetComponent<Renderer>();
         }
 
-        static void BuildHeadHurtbox(Transform parent, Fighter owner)
+        static Transform BuildHeadHurtbox(Transform parent, Fighter owner)
         {
             GameObject go = new GameObject("Hurtbox_Head");
             go.transform.SetParent(parent, false);
@@ -418,6 +424,8 @@ namespace TheFighter
             Hurtbox box = go.AddComponent<Hurtbox>();
             box.Owner = owner;
             box.Zone = HitZone.Head;
+
+            return go.transform;
         }
 
         static void BuildBodyHurtbox(Transform parent, Fighter owner)

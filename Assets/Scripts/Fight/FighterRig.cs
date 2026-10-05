@@ -93,6 +93,14 @@ namespace TheFighter
         /// those yet, so procedural motion is the only thing covering them.
         [Range(0f, 1f)] public float ProceduralMotionWeight = 1f;
 
+        [Header("Head movement")]
+        /// Not scaled by ProceduralMotionWeight: there are no lean or duck clips, so this is the
+        /// only thing showing the player that their head actually moved.
+        public float LeanDegrees = 13f;
+        public float LeanSideShift = 0.06f;
+        public float CrouchDip = 0.22f;
+        public float CrouchPitch = 7f;
+
         [Header("Knockdown")]
         public Vector3 DownPosition = new Vector3(0f, -0.72f, -0.08f);
         public Vector3 DownRotation = new Vector3(24f, 0f, 10f);
@@ -460,6 +468,11 @@ namespace TheFighter
                 angles.x -= StaggerLean;
                 position.z -= 0.04f;
             }
+
+            angles.z -= Owner.LeanAmount * LeanDegrees;
+            position.x += Owner.LeanAmount * LeanSideShift;
+            position.y -= Owner.CrouchAmount * CrouchDip;
+            angles.x += Owner.CrouchAmount * CrouchPitch;
 
             position += _recoilPush * recoil;
             angles += _recoilAngles * recoil;

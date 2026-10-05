@@ -15,8 +15,16 @@ namespace TheFighter
         public BoxingStyle Style = BoxingStyle.BoxerPuncher;
         public FighterStats Stats = new FighterStats();
 
+        [Header("Pace")]
+        /// 1 is the designed pace. Higher is slower and more deliberate - one dial for "the whole
+        /// fight is too fast", applied to punch timings and footwork together so they stay in
+        /// proportion. Live-tunable in play mode.
+        [Range(0.5f, 2.5f)] public float Tempo = 1f;
+
         [Header("Rig")]
         public Transform EyeAnchor;
+        /// Leaning and ducking move this, which is what makes head movement a real defence.
+        public Transform HeadHurtbox;
         public FighterRig Rig;
         public Renderer[] BodyRenderers;
 
@@ -47,6 +55,10 @@ namespace TheFighter
         public bool GuardBroken { get; private set; }
         public bool IsDodging { get; private set; }
         public float AimHeight { get; private set; }
+        /// -1 leaning left, +1 right.
+        public float LeanAmount { get; private set; }
+        /// 0 standing, 1 fully ducked.
+        public float CrouchAmount { get; private set; }
 
         public PunchDefinition ActivePunch { get; private set; }
         public HandRole ActiveHand { get; private set; }
@@ -95,6 +107,8 @@ namespace TheFighter
         float _downTimer;
         float _comboTimer;
         int _comboStacks;
+        Vector3 _headHurtboxBase;
+        bool _headHurtboxCaptured;
 
         void Awake()
         {
@@ -183,6 +197,8 @@ namespace TheFighter
             _downTimer = 0f;
             _comboTimer = 0f;
             _comboStacks = 0;
+            LeanAmount = 0f;
+            CrouchAmount = 0f;
             Motor.Stop();
         }
 
@@ -205,6 +221,8 @@ namespace TheFighter
             _downTimer = 0f;
             _comboTimer = 0f;
             _comboStacks = 0;
+            LeanAmount = 0f;
+            CrouchAmount = 0f;
             Motor.Stop();
         }
 
@@ -338,6 +356,7 @@ namespace TheFighter
             AimHeight = Mathf.Clamp01(intent.AimHeight);
 
             HandleGuard(intent, dt);
+            HandleHeadMovement(intent, dt);
             HandleDodge(intent);
             HandleMovement(intent, dt);
 
@@ -439,6 +458,43 @@ namespace TheFighter
             }
         }
 
+        /// Slipping and ducking, which move the head hurtbox rather than granting a damage
+        /// reduction - a punch aimed where your head was simply misses. Cheap in gas but not free,
+        /// and it costs footwork, which is the trade that makes it a decision.
+        void HandleHeadMovement(FighterIntent intent, float dt)
+        {
+            bool allowed = (State == ActionState.Free || State == ActionState.Recovery) && !IsDodging;
+
+            float wantedLean = allowed ? Mathf.Clamp(intent.Lean, -1f, 1f) : 0f;
+            float wantedCrouch = allowed && intent.Crouch ? 1f : 0f;
+
+            LeanAmount = Mathf.MoveTowards(LeanAmount, wantedLean, CombatTuning.HeadMoveSpeed * dt);
+            CrouchAmount = Mathf.MoveTowards(CrouchAmount, wantedCrouch, CombatTuning.HeadMoveSpeed * dt);
+
+            float effort = Mathf.Abs(LeanAmount) + CrouchAmount;
+            if (effort > 0.05f)
+            {
+                Stamina = Mathf.Max(0f,
+                    Stamina - CombatTuning.HeadMoveStaminaDrainPerSecond * effort * dt);
+            }
+
+            if (HeadHurtbox == null)
+            {
+                return;
+            }
+
+            if (!_headHurtboxCaptured)
+            {
+                _headHurtboxBase = HeadHurtbox.localPosition;
+                _headHurtboxCaptured = true;
+            }
+
+            HeadHurtbox.localPosition = _headHurtboxBase + new Vector3(
+                LeanAmount * CombatTuning.LeanHeadOffset,
+                -CrouchAmount * CombatTuning.CrouchHeadOffset,
+                0f);
+        }
+
         void HandleDodge(FighterIntent intent)
         {
             if (!intent.Dodge || IsDodging)
@@ -464,7 +520,16 @@ namespace TheFighter
         void HandleMovement(FighterIntent intent, float dt)
         {
             Vector2 move = Vector2.ClampMagnitude(intent.Move, 1f);
-            float speed = Stats.MoveSpeed * _profile.Footwork;
+            float speed = Stats.MoveSpeed * _profile.Footwork / Mathf.Max(0.1f, Tempo);
+
+            if (CrouchAmount > 0.01f)
+            {
+                speed *= Mathf.Lerp(1f, CombatTuning.CrouchMoveMultiplier, CrouchAmount);
+            }
+            if (Mathf.Abs(LeanAmount) > 0.01f)
+            {
+                speed *= Mathf.Lerp(1f, CombatTuning.LeanMoveMultiplier, Mathf.Abs(LeanAmount));
+            }
 
             if (IsDodging)
             {
@@ -545,7 +610,7 @@ namespace TheFighter
         /// Speed owns the outgoing half of a punch.
         float PunchSpeedScale()
         {
-            float scale = Stats.PunchSpeedScale;
+            float scale = Stats.PunchSpeedScale * Mathf.Max(0.1f, Tempo);
             if (IsExhausted)
             {
                 scale *= CombatTuning.ExhaustedTimingMultiplier;
@@ -556,7 +621,8 @@ namespace TheFighter
         /// Skill owns getting the hand back, and the style's conditioning tightens it further.
         float RecoveryScale()
         {
-            float scale = Stats.RecoveryScale / Mathf.Max(0.5f, _profile.Stamina);
+            float scale = Stats.RecoveryScale * Mathf.Max(0.1f, Tempo)
+                / Mathf.Max(0.5f, _profile.Stamina);
             if (IsExhausted)
             {
                 scale *= CombatTuning.ExhaustedTimingMultiplier;

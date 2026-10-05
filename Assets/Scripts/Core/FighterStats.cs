@@ -42,7 +42,7 @@ namespace TheFighter
         public float MaxHealth { get { return 70f + Endurance * 5.5f; } }
         public float MaxStamina { get { return 60f + Endurance * 2.5f + Skill * 1.5f; } }
 
-        public float MoveSpeed { get { return 1.8f + Speed * 0.075f; } }
+        public float MoveSpeed { get { return 1.15f + Speed * 0.05f; } }
         public float PunchDamage { get { return 5f + Power * 0.85f; } }
 
         /// Arm length from the shoulder joint, in metres.

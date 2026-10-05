@@ -540,8 +540,8 @@ namespace TheFighter
             }
             else
             {
-                line1 = "WASD step / circle     J or LMB jab     K or RMB straight     I or Q hook     O or E uppercut";
-                line2 = "Shift (hold) guard     Space slip     mouse aims (look down = body)     V view     H hud     R restart     Esc free cursor";
+                line1 = "WASD step / circle     J or LMB jab     K or RMB straight     I hook     O uppercut     mouse aims (look down = body)";
+                line2 = "Shift guard     Space slip     Q / E lean     C duck     V view     H hud     R restart     Esc free cursor";
             }
 
             float h = 44f * _scale;

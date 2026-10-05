@@ -34,6 +34,13 @@ namespace TheFighter
 
             intent.Guard = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.L);
             intent.Dodge = Input.GetKeyDown(KeyCode.Space);
+
+            // Head movement, held rather than tapped: Q and E lean, C ducks.
+            float lean = 0f;
+            if (Input.GetKey(KeyCode.Q)) { lean -= 1f; }
+            if (Input.GetKey(KeyCode.E)) { lean += 1f; }
+            intent.Lean = lean;
+            intent.Crouch = Input.GetKey(KeyCode.C);
             intent.AimHeight = CameraRig != null ? CameraRig.AimHeight : 1f;
 
             PunchKind kind;
@@ -61,12 +68,13 @@ namespace TheFighter
                 kind = PunchKind.Straight;
                 return true;
             }
-            if (Input.GetKeyDown(KeyCode.I) || Input.GetKeyDown(KeyCode.Q))
+            // Q and E used to alias hook and uppercut; they lean now.
+            if (Input.GetKeyDown(KeyCode.I))
             {
                 kind = PunchKind.Hook;
                 return true;
             }
-            if (Input.GetKeyDown(KeyCode.O) || Input.GetKeyDown(KeyCode.E))
+            if (Input.GetKeyDown(KeyCode.O))
             {
                 kind = PunchKind.Uppercut;
                 return true;

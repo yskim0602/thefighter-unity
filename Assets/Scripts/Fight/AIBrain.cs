@@ -9,7 +9,7 @@ namespace TheFighter
     public class AIBrain : MonoBehaviour, IFighterBrain
     {
         [Header("Rhythm")]
-        public float DecisionInterval = 0.17f;
+        public float DecisionInterval = 0.22f;
 
         [Header("Dynamic style")]
         public float EarlyPhaseSeconds = 12f;
@@ -30,6 +30,9 @@ namespace TheFighter
         float _circleTimer;
         float _circleDirection = 1f;
         float _aim = 1f;
+        float _leanTimer;
+        float _leanDirection = 1f;
+        float _crouchTimer;
         bool _punchQueued;
         bool _dodgeQueued;
         PunchKind _queuedPunch = PunchKind.Jab;
@@ -78,6 +81,14 @@ namespace TheFighter
             {
                 _guardTimer -= deltaTime;
             }
+            if (_leanTimer > 0f)
+            {
+                _leanTimer -= deltaTime;
+            }
+            if (_crouchTimer > 0f)
+            {
+                _crouchTimer -= deltaTime;
+            }
 
             _circleTimer -= deltaTime;
             if (_circleTimer <= 0f)
@@ -95,6 +106,8 @@ namespace TheFighter
 
             intent.Move = ComputeMove();
             intent.Guard = _guardTimer > 0f;
+            intent.Lean = _leanTimer > 0f ? _leanDirection : 0f;
+            intent.Crouch = _crouchTimer > 0f;
             intent.AimHeight = _aim;
 
             if (_dodgeQueued)
@@ -168,13 +181,24 @@ namespace TheFighter
 
             if (threatened && Random.value < Skill)
             {
-                if (!_self.GuardBroken && Random.value < 0.65f)
+                // Four ways out, not one. Head movement is the cheapest, so it comes up most.
+                float choice = Random.value;
+                if (choice < 0.38f && !_self.GuardBroken)
                 {
                     _guardTimer = Random.Range(0.25f, 0.5f);
                 }
-                else
+                else if (choice < 0.58f)
                 {
                     _dodgeQueued = true;
+                }
+                else if (choice < 0.84f)
+                {
+                    _leanTimer = Random.Range(0.25f, 0.5f);
+                    _leanDirection = Random.value < 0.5f ? -1f : 1f;
+                }
+                else
+                {
+                    _crouchTimer = Random.Range(0.25f, 0.45f);
                 }
                 return;
             }
