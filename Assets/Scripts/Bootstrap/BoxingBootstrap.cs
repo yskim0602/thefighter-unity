@@ -53,6 +53,9 @@ namespace TheFighter
         /// The model is measured and rescaled to this, so a wrong FBX unit scale cannot make it
         /// invisible. Set to 0 to trust the import scale instead.
         public float ModelTargetHeight = 1.8f;
+        /// Solves the arms onto the cheeks for the guard, since there is no guard clip. Turn it off
+        /// if you get one.
+        public bool UseIkGuard = true;
         /// How much of the procedural body motion survives once real clips are driving the model.
         /// Kept low: the clips already breathe and lean, and doing both at once is exactly what
         /// makes an animated model look boneless.
@@ -376,6 +379,13 @@ namespace TheFighter
 
             rig.HandSource = animator;
             rig.ProceduralMotionWeight = Mathf.Clamp01(ModelProceduralMotion);
+
+            if (UseIkGuard)
+            {
+                GuardPose guard = fighter.gameObject.AddComponent<GuardPose>();
+                guard.Owner = fighter;
+                guard.ModelAnimator = animator;
+            }
 
             FighterAnimation animation = fighter.gameObject.AddComponent<FighterAnimation>();
             animation.Owner = fighter;
