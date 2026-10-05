@@ -49,6 +49,10 @@ namespace TheFighter
         /// The model is measured and rescaled to this, so a wrong FBX unit scale cannot make it
         /// invisible. Set to 0 to trust the import scale instead.
         public float ModelTargetHeight = 1.8f;
+        /// How much of the procedural body motion survives once real clips are driving the model.
+        /// Kept low: the clips already breathe and lean, and doing both at once is exactly what
+        /// makes an animated model look boneless.
+        [Range(0f, 1f)] public float ModelProceduralMotion = 0.15f;
         /// Dragged once here and shared by both fighters, because a component added at runtime has
         /// nowhere of its own to hold Inspector references.
         public BoxerClipSet AnimationClips = new BoxerClipSet();
@@ -349,6 +353,7 @@ namespace TheFighter
             fighter.BodyRenderers = modelRenderers;
 
             rig.HandSource = animator;
+            rig.ProceduralMotionWeight = Mathf.Clamp01(ModelProceduralMotion);
 
             FighterAnimation animation = fighter.gameObject.AddComponent<FighterAnimation>();
             animation.Owner = fighter;

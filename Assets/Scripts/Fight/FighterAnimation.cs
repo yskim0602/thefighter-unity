@@ -53,7 +53,22 @@ namespace TheFighter
         public BoxerClipSet Clips;
 
         [Header("Blending")]
+        /// Weights are damped rather than set outright. Without this the stance/footwork mix
+        /// follows the AI's frame-to-frame jitter and the skeleton visibly shivers.
         public float StanceBlendSpeed = 9f;
+        /// Punches have to land on their frame, so they are not damped nearly as much.
+        public float ActionBlendSpeed = 36f;
+        /// Below this much movement it is pure stance, above the next it is pure footwork. The gap
+        /// between them is deliberately narrow: a long cross-fade averages two unrelated poses and
+        /// that average is what reads as boneless.
+        public float StepDeadzone = 0.12f;
+        public float StepFullSpeed = 0.55f;
+
+        [Header("Punch clips")]
+        /// How much of a punch clip the punch maps onto. Mixamo punches include a long wind-up and
+        /// return, and squeezing all of it into our 0.3s jab looks frantic; 0.5 uses the first half
+        /// at half the speed. Our timing does not change either way - only which frames you see.
+        [Range(0.1f, 1f)] public float PunchClipPortion = 0.6f;
 
         enum Slot
         {
@@ -76,6 +91,7 @@ namespace TheFighter
         AnimationClipPlayable[] _playables;
         float[] _lengths;
         float[] _weights;
+        float[] _smoothed;
         bool[] _assigned;
         bool _built;
 
@@ -132,6 +148,7 @@ namespace TheFighter
             _playables = new AnimationClipPlayable[count];
             _lengths = new float[count];
             _weights = new float[count];
+            _smoothed = new float[count];
             _assigned = new bool[count];
 
             // Our motor owns position. Root motion on top of it would move everyone twice, which
@@ -191,6 +208,16 @@ namespace TheFighter
                 _weights[i] = 0f;
             }
 
+            // Every looping clip advances every frame whatever its weight, so a clip fading out is
+            // still moving. Freezing it mid-fade is half of what makes a blend look wrong.
+            for (int i = 0; i < (int)Slot.Jab; i++)
+            {
+                if (_assigned[i])
+                {
+                    _playables[i].SetTime(Mathf.Repeat(_baseClock, _lengths[i]));
+                }
+            }
+
             int action = ResolveAction(dt);
             float actionWeight = 0f;
 
@@ -206,7 +233,7 @@ namespace TheFighter
                 ApplyStanceAndFootwork(baseWeight, dt);
             }
 
-            Commit();
+            Commit(dt);
         }
 
         /// Returns the slot to play as a one-shot this frame, or -1 for none.
@@ -223,7 +250,8 @@ namespace TheFighter
             PunchDefinition punch = Owner.ActivePunch;
             if (punch != null)
             {
-                return Scrub(SlotForPunch(punch.Kind), Owner.PunchProgress);
+                return Scrub(SlotForPunch(punch.Kind),
+                    Owner.PunchProgress * Mathf.Clamp01(PunchClipPortion));
             }
 
             if (Owner.IsDodging)
@@ -274,7 +302,9 @@ namespace TheFighter
             _guardBlend = Mathf.MoveTowards(_guardBlend, guarding ? 1f : 0f, StanceBlendSpeed * dt);
 
             int step = ResolveStep(move);
-            float effort = step >= 0 ? move.magnitude : 0f;
+            float effort = step >= 0
+                ? Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(StepDeadzone, StepFullSpeed, move.magnitude))
+                : 0f;
 
             float stanceWeight = baseWeight * (1f - effort);
             int guard = _assigned[(int)Slot.Guard] ? (int)Slot.Guard : -1;
@@ -333,30 +363,41 @@ namespace TheFighter
             {
                 return;
             }
-            _playables[index].SetTime(Mathf.Repeat(_baseClock, _lengths[index]));
             _weights[index] += weight;
         }
 
-        void Commit()
+        static bool IsAction(int index)
+        {
+            return index >= (int)Slot.Jab;
+        }
+
+        void Commit(float deltaTime)
         {
             float total = 0f;
+
             for (int i = 0; i < _weights.Length; i++)
             {
-                total += _weights[i];
+                if (!_assigned[i])
+                {
+                    continue;
+                }
+
+                float speed = IsAction(i) ? ActionBlendSpeed : StanceBlendSpeed;
+                _smoothed[i] = Mathf.MoveTowards(_smoothed[i], _weights[i], speed * deltaTime);
+                total += _smoothed[i];
             }
 
             // Never leave the mixer empty: an unweighted Humanoid snaps to T-pose.
             if (total <= 0.0001f && _assigned[(int)Slot.Idle])
             {
-                _weights[(int)Slot.Idle] = 1f;
-                _playables[(int)Slot.Idle].SetTime(Mathf.Repeat(_baseClock, _lengths[(int)Slot.Idle]));
+                _smoothed[(int)Slot.Idle] = 1f;
             }
 
-            for (int i = 0; i < _weights.Length; i++)
+            for (int i = 0; i < _smoothed.Length; i++)
             {
                 if (_assigned[i])
                 {
-                    _mixer.SetInputWeight(i, _weights[i]);
+                    _mixer.SetInputWeight(i, _smoothed[i]);
                 }
             }
         }

@@ -86,6 +86,12 @@ namespace TheFighter
         public Animator HandSource;
         /// Wrist bone to knuckle, plus the glove. Metres.
         public float HandReachOffset = 0.11f;
+        /// Scales the procedural motion that real animation already expresses - the breathing bob,
+        /// weight shift, step shuffle and punch lean. Doing both at once is what makes an animated
+        /// model look boneless, because the body leans twice for every punch. Recoil, the stagger
+        /// and the knockdown pose are deliberately left at full strength: there are no clips for
+        /// those yet, so procedural motion is the only thing covering them.
+        [Range(0f, 1f)] public float ProceduralMotionWeight = 1f;
 
         [Header("Knockdown")]
         public Vector3 DownPosition = new Vector3(0f, -0.72f, -0.08f);
@@ -299,7 +305,7 @@ namespace TheFighter
                 direction.Normalize();
             }
 
-            float fade = 1f - _downBlend;
+            float fade = (1f - _downBlend) * ProceduralMotionWeight;
             PoseLeg(LeadLeg, LeadLegPose, SideSign(HandRole.Lead),
                 Mathf.Sin(_stepPhase), effort * fade, direction);
             PoseLeg(RearLeg, RearLegPose, SideSign(HandRole.Rear),
@@ -422,15 +428,19 @@ namespace TheFighter
             Vector3 position = Vector3.zero;
             Vector3 angles = Vector3.zero;
 
+            float procedural = ProceduralMotionWeight;
+
             // Breathing at rest, bouncing on the toes when moving. Without it two capsules read
-            // as scenery no matter what else the rig does.
+            // as scenery no matter what else the rig does - but a real idle clip already breathes,
+            // so this scales away once a model is in.
             float effort = move.magnitude;
             _bobPhase += deltaTime * Mathf.Lerp(IdleBobRate, MoveBobRate, effort) * Mathf.PI * 2f;
-            position.y += Mathf.Sin(_bobPhase) * Mathf.Lerp(IdleBobHeight, MoveBobHeight, effort);
+            position.y += Mathf.Sin(_bobPhase)
+                * Mathf.Lerp(IdleBobHeight, MoveBobHeight, effort) * procedural;
 
             // Roll into the circle, lean into a step forward.
-            angles.z -= move.x * WeightShiftDegrees;
-            angles.x += move.y * 2f;
+            angles.z -= move.x * WeightShiftDegrees * procedural;
+            angles.x += move.y * 2f * procedural;
 
             PunchDefinition punch = Owner.ActivePunch;
             if (punch != null)
@@ -440,9 +450,9 @@ namespace TheFighter
                     - Mathf.Clamp01(-Owner.PunchTrack / CombatTuning.PunchLoadTrack) * 0.6f;
                 float sign = SideSign(Owner.ActiveHand);
 
-                position.z += commit * PunchLunge;
-                angles.y -= sign * commit * PunchTorsoYaw;
-                angles.x += commit * PunchLean - punch.RiseArc * commit * 7f;
+                position.z += commit * PunchLunge * procedural;
+                angles.y -= sign * commit * PunchTorsoYaw * procedural;
+                angles.x += (commit * PunchLean - punch.RiseArc * commit * 7f) * procedural;
             }
 
             if (Owner.State == ActionState.Staggered)
