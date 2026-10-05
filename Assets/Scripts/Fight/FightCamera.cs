@@ -30,15 +30,27 @@ namespace TheFighter
         public float FieldOfView = 58f;
 
         [Header("Broadcast arc")]
-        /// Degrees either side of straight-behind-the-player the camera is allowed to wander.
-        public float OrbitRange = 32f;
+        /// How far off straight-behind-the-player the camera wanders. It stays on one side of the
+        /// ring for a whole fight, the way a ringside operator does.
+        ///
+        /// OrbitMin is the important one: at a small angle the camera, the player and the opponent
+        /// are nearly collinear, so the line to the opponent's head runs straight through the back
+        /// of the player's own head. Height alone cannot fix that - you would have to climb high
+        /// enough to look at the tops of their heads. Stepping sideways fixes it at any height,
+        /// so the arc simply never passes through centre.
+        public float OrbitMin = 22f;
+        public float OrbitRange = 44f;
         public float OrbitSpeed = 7f;
         public float OrbitDwell = 2.2f;
         public float NearDistance = 2.45f;
         public float FarDistance = 3.95f;
-        public float Height = 1.95f;
+        public float Height = 2.2f;
         public float HeightDrift = 0.18f;
-        public float LookHeight = 1.28f;
+        public float LookHeight = 1.45f;
+        /// 0 frames the pair evenly, 1 centres the opponent. Biased toward the opponent because
+        /// that is where the punches you have to read are coming from; your own fighter can sit
+        /// nearer the edge of frame.
+        [Range(0f, 1f)] public float OpponentBias = 0.5f;
         public float PositionSmoothTime = 0.45f;
         public float RotationSmoothing = 6f;
 
@@ -61,6 +73,7 @@ namespace TheFighter
         float _push;
 
         float _orbit;
+        float _orbitSide = 1f;
         float _orbitTarget;
         float _orbitVelocity;
         float _dwellTimer;
@@ -92,6 +105,8 @@ namespace TheFighter
             }
 
             _heightPhase = Random.value * 10f;
+            _orbitSide = Random.value < 0.5f ? -1f : 1f;
+            _orbit = _orbitSide * (OrbitMin + OrbitRange) * 0.5f;
             PickOrbitTarget();
         }
 
@@ -162,13 +177,24 @@ namespace TheFighter
 
         void PickOrbitTarget()
         {
+            // One side for the whole fight, and never nearer centre than OrbitMin. Crossing over
+            // would both put the player back in front of the camera and flip the controls on
+            // screen: footwork is opponent-relative, so from behind the opponent "circle left"
+            // would read as right.
+            float low = Mathf.Min(OrbitMin, OrbitRange);
+            float high = Mathf.Max(OrbitMin, OrbitRange);
+            float span = high - low;
+
             // Always move somewhere meaningfully different, so the drift never stalls mid-arc.
-            float pick = Random.Range(-OrbitRange, OrbitRange);
-            if (Mathf.Abs(pick - _orbit) < OrbitRange * 0.5f)
+            float pick = Random.Range(low, high);
+            if (span > 0.01f && Mathf.Abs(pick - Mathf.Abs(_orbit)) < span * 0.4f)
             {
-                pick = -Mathf.Sign(_orbit) * Random.Range(OrbitRange * 0.4f, OrbitRange);
+                pick = Mathf.Abs(_orbit) - low < span * 0.5f
+                    ? Random.Range(low + span * 0.5f, high)
+                    : Random.Range(low, low + span * 0.5f);
             }
-            _orbitTarget = Mathf.Clamp(pick, -OrbitRange, OrbitRange);
+
+            _orbitTarget = _orbitSide * pick;
             _dwellTimer = OrbitDwell * Random.Range(0.7f, 1.5f);
         }
 
@@ -210,6 +236,7 @@ namespace TheFighter
             Vector3 enemyPos = Enemy != null ? Enemy.transform.position : playerPos + Player.transform.forward * 1.6f;
 
             Vector3 mid = (playerPos + enemyPos) * 0.5f;
+            Vector3 framed = Vector3.Lerp(mid, enemyPos, OpponentBias * 0.5f);
 
             Vector3 toEnemy = enemyPos - playerPos;
             toEnemy.y = 0f;
@@ -232,7 +259,7 @@ namespace TheFighter
             View.transform.position = Vector3.SmoothDamp(View.transform.position, target,
                 ref _positionVelocity, PositionSmoothTime, Mathf.Infinity, Time.unscaledDeltaTime);
 
-            Vector3 look = mid + Vector3.up * LookHeight;
+            Vector3 look = framed + Vector3.up * LookHeight;
             Fighter down = DownedFighter();
             if (down != null)
             {

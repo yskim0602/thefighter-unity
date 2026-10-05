@@ -5,18 +5,27 @@ using UnityEngine.Playables;
 
 namespace TheFighter
 {
-    /// One clip, plus which slice of it to use. Actions take a list of these so the same punch can
-    /// come out of a different animation each time - a jab that always looks identical is the
-    /// fastest way to make a fighter read as a machine.
+    /// One clip, plus how to play it. Every slot takes a list of these, so a slot can hold several
+    /// different motions - the same punch comes out of a different animation each time, and the two
+    /// fighters pick different idles.
     [System.Serializable]
     public class ClipVariant
     {
         public AnimationClip Clip;
-        /// Normalised start and end. Mixamo clips are often longer than our punch, or are whole
-        /// combos - "Body Jab Cross" is a left jab then a right cross, so 0 to 0.5 is the jab and
-        /// 0.45 to 1 is the cross. Trim here when a punch looks frantic; the fight's timing does
-        /// not change either way, only which frames you see.
-        public Vector2 Window = new Vector2(0f, 0.7f);
+
+        /// Which slice of the clip to use, 0 to 1. **Leave both at 0 for the whole clip.**
+        ///
+        /// Mixamo clips are often longer than what we need, or are whole combos - "Body Jab Cross"
+        /// is a left jab then a right cross, so Jab takes 0 to 0.5 and Straight takes 0.45 to 1 of
+        /// the same file. Trim the end when an action looks frantic, or trim both ends of a loop
+        /// to cut a wind-up the clip opens with. The fight's timing never changes either way, only
+        /// which frames you see.
+        public Vector2 Window = Vector2.zero;
+
+        /// Playback rate, for looping slots only - an action's rate comes from the fight, since
+        /// code owns punch timing. Raise it if a step cycle drags behind the feet, lower it if the
+        /// legs scissor faster than the fighter travels. 0 reads as 1.
+        public float Speed = 1f;
     }
 
     /// The clips, in one place. Lives on BoxingBootstrap so both fighters share a single set you
@@ -26,19 +35,21 @@ namespace TheFighter
     public class BoxerClipSet
     {
         [Header("Stance (looping)")]
-        public AnimationClip Idle;
-        public AnimationClip Guard;
+        /// The one slot that must not be empty: an unweighted Humanoid snaps to T-pose.
+        public ClipVariant[] Idle = new ClipVariant[0];
+        /// Leave empty to let GuardPose raise the gloves with IK instead.
+        public ClipVariant[] Guard = new ClipVariant[0];
 
         [Header("Footwork (looping) - all four blend, so diagonals use two at once")]
-        public AnimationClip StepForward;
-        public AnimationClip StepBack;
+        public ClipVariant[] StepForward = new ClipVariant[0];
+        public ClipVariant[] StepBack = new ClipVariant[0];
         /// Which way the clip *looks* like it is going, not which file it came from. A southpaw set
         /// built by mirroring an orthodox one has its side steps swapped, so the mirrored
         /// step-left clip belongs in StepRight here.
-        public AnimationClip StepLeft;
-        public AnimationClip StepRight;
+        public ClipVariant[] StepLeft = new ClipVariant[0];
+        public ClipVariant[] StepRight = new ClipVariant[0];
 
-        [Header("Punches (add as many variants as you like - one is picked at random)")]
+        [Header("Punches - one variant is picked at random per punch")]
         public ClipVariant[] Jab = new ClipVariant[0];
         public ClipVariant[] Straight = new ClipVariant[0];
         public ClipVariant[] Hook = new ClipVariant[0];
@@ -57,6 +68,22 @@ namespace TheFighter
                 case PunchKind.Hook: return Hook;
                 default: return Uppercut;
             }
+        }
+
+        public static bool HasAny(ClipVariant[] variants)
+        {
+            if (variants == null)
+            {
+                return false;
+            }
+            for (int i = 0; i < variants.Length; i++)
+            {
+                if (variants[i] != null && variants[i].Clip != null)
+                {
+                    return true;
+                }
+            }
+            return false;
         }
     }
 
@@ -93,12 +120,18 @@ namespace TheFighter
 
         [Header("Hip height")]
         /// Mixamo clips disagree about how high the hips sit, because each one's Root Transform
-        /// Position (Y) is measured from a different reference. Switching from idle to a punch then
-        /// pops the whole body upward, which reads as the fighter hopping on every shot. The proper
-        /// fix is per-clip import settings - Root Transform Position (Y), Bake Into Pose on, Based
-        /// Upon Feet - but that is one clip at a time across every file, so this is the
-        /// one-checkbox version. Measured against the model's own transform, so leaning, ducking
-        /// and the knockdown pose (which all live above it) still work.
+        /// Position (Y) is measured from a different reference. Blending from idle into a punch
+        /// then pops the whole body upward, which reads as the fighter hopping on every shot.
+        ///
+        /// So the hips are pinned to the height idle puts them at - but **only while an action is
+        /// playing**, scaled by that action's weight. Pinning them the whole time would also
+        /// cancel the vertical bob inside the idle and step cycles, and that bob is most of what
+        /// makes a stance look alive and a step look like weight transferring. The proper fix is
+        /// still per-clip import settings (Root Transform Position (Y), Bake Into Pose, Based Upon
+        /// Feet), one clip at a time; this is the one-checkbox version.
+        ///
+        /// Measured against the model's own transform, so leaning, ducking and the knockdown pose
+        /// (which all live above it) still work.
         [Range(0f, 1f)] public float HipHeightLock = 1f;
 
         [Header("Blending")]
@@ -127,7 +160,9 @@ namespace TheFighter
         class Entry
         {
             public AnimationClip Clip;
-            public Vector2 Window;
+            public float Start;
+            public float End;
+            public float Speed;
             public bool Looping;
             public AnimationClipPlayable Playable;
             public float Length;
@@ -145,9 +180,14 @@ namespace TheFighter
         readonly List<int> _down = new List<int>();
         bool _built;
 
+        /// GuardPose reads this and stands down: if a guard clip exists, IK gloves fighting an
+        /// animated guard gives you neither.
+        public bool GuardClipAssigned { get; private set; }
+
         Transform _hips;
         float _hipHeight;
         bool _hipCaptured;
+        float _actionWeight;
 
         float _baseClock;
         float _slipClock;
@@ -164,7 +204,7 @@ namespace TheFighter
         /// Picked once, because a stance is chosen before the bell and never changes mid-fight.
         public static BoxerClipSet Resolve(Stance stance, BoxerClipSet orthodox, BoxerClipSet southpaw)
         {
-            bool southpawReady = southpaw != null && southpaw.Idle != null;
+            bool southpawReady = southpaw != null && BoxerClipSet.HasAny(southpaw.Idle);
             return stance == Stance.Southpaw && southpawReady ? southpaw : orthodox;
         }
 
@@ -207,6 +247,9 @@ namespace TheFighter
                 _punches[i] = new List<int>();
             }
 
+            // A loop keeps one variant for the whole fight - swapping idles mid-round would pop.
+            // Rolling it per fighter instead means the two boxers often stand differently, which
+            // is free characterisation.
             _poses[(int)Pose.Idle] = AddLoop(_clips.Idle);
             _poses[(int)Pose.Guard] = AddLoop(_clips.Guard);
             _poses[(int)Pose.StepForward] = AddLoop(_clips.StepForward);
@@ -214,13 +257,15 @@ namespace TheFighter
             _poses[(int)Pose.StepLeft] = AddLoop(_clips.StepLeft);
             _poses[(int)Pose.StepRight] = AddLoop(_clips.StepRight);
 
+            GuardClipAssigned = _poses[(int)Pose.Guard] >= 0;
+
             for (int i = 0; i < PunchLibrary.All.Length; i++)
             {
                 PunchKind kind = PunchLibrary.All[i];
-                AddVariants(_clips.PunchVariants(kind), _punches[(int)kind]);
+                AddVariants(_clips.PunchVariants(kind), _punches[(int)kind], false);
             }
-            AddVariants(_clips.Slip, _slip);
-            AddVariants(_clips.Down, _down);
+            AddVariants(_clips.Slip, _slip, false);
+            AddVariants(_clips.Down, _down, false);
 
             if (_entries.Count == 0)
             {
@@ -255,25 +300,38 @@ namespace TheFighter
             _built = true;
         }
 
-        int AddLoop(AnimationClip clip)
+        /// Adds one randomly chosen variant from a looping slot, and returns its index.
+        int AddLoop(ClipVariant[] variants)
         {
-            if (clip == null)
-            {
-                return -1;
-            }
-
-            Entry entry = new Entry();
-            entry.Clip = clip;
-            entry.Window = new Vector2(0f, 1f);
-            entry.Looping = true;
-            _entries.Add(entry);
-            return _entries.Count - 1;
+            List<int> added = new List<int>();
+            AddVariants(variants, added, true);
+            return added.Count > 0 ? added[0] : -1;
         }
 
-        void AddVariants(ClipVariant[] variants, List<int> into)
+        void AddVariants(ClipVariant[] variants, List<int> into, bool pickOne)
         {
             if (variants == null)
             {
+                return;
+            }
+
+            if (pickOne)
+            {
+                // Collect the assigned ones first, so an empty slot in the middle of the array
+                // does not skew the roll toward whatever follows it.
+                List<ClipVariant> usable = new List<ClipVariant>();
+                for (int i = 0; i < variants.Length; i++)
+                {
+                    if (variants[i] != null && variants[i].Clip != null)
+                    {
+                        usable.Add(variants[i]);
+                    }
+                }
+                if (usable.Count == 0)
+                {
+                    return;
+                }
+                into.Add(Append(usable[Random.Range(0, usable.Count)], true));
                 return;
             }
 
@@ -283,14 +341,32 @@ namespace TheFighter
                 {
                     continue;
                 }
-
-                Entry entry = new Entry();
-                entry.Clip = variants[i].Clip;
-                entry.Window = variants[i].Window;
-                entry.Looping = false;
-                _entries.Add(entry);
-                into.Add(_entries.Count - 1);
+                into.Add(Append(variants[i], false));
             }
+        }
+
+        int Append(ClipVariant variant, bool looping)
+        {
+            Entry entry = new Entry();
+            entry.Clip = variant.Clip;
+            entry.Looping = looping;
+
+            // Unity fills a freshly grown array element with zeroes, so a window that has not been
+            // touched reads as "the whole clip" rather than as a zero-length slice that would
+            // freeze the clip on frame one. Same for Speed.
+            float a = Mathf.Clamp01(Mathf.Min(variant.Window.x, variant.Window.y));
+            float b = Mathf.Clamp01(Mathf.Max(variant.Window.x, variant.Window.y));
+            if (b - a < 0.01f)
+            {
+                a = 0f;
+                b = 1f;
+            }
+            entry.Start = a;
+            entry.End = b;
+            entry.Speed = variant.Speed <= 0.0001f ? 1f : variant.Speed;
+
+            _entries.Add(entry);
+            return _entries.Count - 1;
         }
 
         // ------------------------------------------------------------------
@@ -318,7 +394,10 @@ namespace TheFighter
                 // of freezing mid-fade. Half of what makes a blend look wrong is a frozen pose.
                 if (entry.Looping)
                 {
-                    entry.Playable.SetTime(Mathf.Repeat(_baseClock, entry.Length));
+                    float span = (entry.End - entry.Start) * entry.Length;
+                    entry.Playable.SetTime(span > 0.0001f
+                        ? entry.Start * entry.Length + Mathf.Repeat(_baseClock * entry.Speed, span)
+                        : entry.Start * entry.Length);
                 }
             }
 
@@ -407,10 +486,7 @@ namespace TheFighter
             }
 
             Entry entry = _entries[index];
-            float start = Mathf.Clamp01(Mathf.Min(entry.Window.x, entry.Window.y));
-            float end = Mathf.Clamp01(Mathf.Max(entry.Window.x, entry.Window.y));
-
-            entry.Playable.SetTime(Mathf.Lerp(start, end, Mathf.Clamp01(progress)) * entry.Length);
+            entry.Playable.SetTime(Mathf.Lerp(entry.Start, entry.End, Mathf.Clamp01(progress)) * entry.Length);
             return index;
         }
 
@@ -445,8 +521,6 @@ namespace TheFighter
                 depthShare = effort * depth / sum;
             }
 
-            // A missing clip gives its share back to the stance rather than to the other axis:
-            // playing a forward step for a sideways slide puts the feet somewhere the body is not.
             int lateralClip = move.x >= 0f
                 ? Fallback(Pose.StepRight, Pose.StepLeft)
                 : Fallback(Pose.StepLeft, Pose.StepRight);
@@ -454,6 +528,8 @@ namespace TheFighter
                 ? Fallback(Pose.StepForward, Pose.StepBack)
                 : Fallback(Pose.StepBack, Pose.StepForward);
 
+            // A missing clip gives its share back to the stance rather than to the other axis:
+            // playing a forward step for a sideways slide puts the feet somewhere the body is not.
             if (lateralClip < 0) { lateralShare = 0f; }
             if (depthClip < 0) { depthShare = 0f; }
 
@@ -500,6 +576,7 @@ namespace TheFighter
         void Commit(float deltaTime)
         {
             float total = 0f;
+            float actions = 0f;
 
             for (int i = 0; i < _entries.Count; i++)
             {
@@ -507,6 +584,11 @@ namespace TheFighter
                 float speed = entry.Looping ? StanceBlendSpeed : ActionBlendSpeed;
                 entry.Weight = Mathf.MoveTowards(entry.Weight, entry.Target, speed * deltaTime);
                 total += entry.Weight;
+
+                if (!entry.Looping)
+                {
+                    actions += entry.Weight;
+                }
             }
 
             // Never leave the mixer empty: an unweighted Humanoid snaps to T-pose.
@@ -514,7 +596,10 @@ namespace TheFighter
             if (total <= 0.0001f && idle >= 0)
             {
                 _entries[idle].Weight = 1f;
+                total = 1f;
             }
+
+            _actionWeight = total > 0.0001f ? Mathf.Clamp01(actions / total) : 0f;
 
             for (int i = 0; i < _entries.Count; i++)
             {
@@ -522,11 +607,12 @@ namespace TheFighter
             }
         }
 
-        /// Pulls the hips back to the height they sat at on the first frame, cancelling the
-        /// per-clip disagreement without touching anything the clips meant to do horizontally.
+        /// Pulls the hips back to the height the stance sits at, in proportion to how much of the
+        /// pose is coming from an action clip. See HipHeightLock for why it is not applied all the
+        /// time.
         void StabiliseHipHeight()
         {
-            if (HipHeightLock <= 0.001f || ModelAnimator == null)
+            if (ModelAnimator == null)
             {
                 return;
             }
@@ -543,14 +629,25 @@ namespace TheFighter
             Transform reference = ModelAnimator.transform;
             Vector3 local = reference.InverseTransformPoint(_hips.position);
 
-            if (!_hipCaptured)
+            // Learn the resting height from the stance itself, while nothing is distorting it. A
+            // slow running average rather than one sample, so the idle bob averages out instead of
+            // pinning the hips to wherever frame one happened to catch them.
+            if (_actionWeight < 0.01f)
             {
-                _hipHeight = local.y;
+                _hipHeight = _hipCaptured
+                    ? Mathf.Lerp(_hipHeight, local.y, 1f - Mathf.Exp(-0.8f * Time.deltaTime))
+                    : local.y;
                 _hipCaptured = true;
                 return;
             }
 
-            local.y = Mathf.Lerp(local.y, _hipHeight, HipHeightLock);
+            float strength = HipHeightLock * _actionWeight;
+            if (!_hipCaptured || strength <= 0.001f)
+            {
+                return;
+            }
+
+            local.y = Mathf.Lerp(local.y, _hipHeight, strength);
             _hips.position = reference.TransformPoint(local);
         }
     }

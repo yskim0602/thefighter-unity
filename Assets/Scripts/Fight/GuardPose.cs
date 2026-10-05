@@ -20,20 +20,33 @@ namespace TheFighter
         public Animator ModelAnimator;
 
         [Header("Where the gloves sit, relative to the head")]
-        /// x is outward from the centre line, y up, z forward. Metres.
-        public Vector3 HandOffset = new Vector3(0.105f, -0.03f, 0.15f);
+        /// x is outward from the centre line, y up, z forward. Metres. Measured from the head
+        /// *bone*, which on a Mixamo rig sits around the jaw rather than at the middle of the
+        /// face, so y is a little positive to reach the cheeks.
+        public Vector3 HandOffset = new Vector3(0.11f, 0.02f, 0.13f);
         /// The lead hand carries a little further forward, as it does in a real stance.
         public float LeadForwardBias = 0.04f;
+
+        [Header("Where the elbow goes")]
+        /// Which way the elbow is pushed off the straight shoulder-to-glove line. x is outward
+        /// from the body, y up, z forward - so this default is "down, slightly out, slightly
+        /// back", which is a boxing guard: elbows hanging in front of the ribs.
+        ///
+        /// Two bones and a target leave the elbow free to sit anywhere on a circle, and this is
+        /// what picks the spot. Pointing it outward instead gives the chicken-wing - arms rising
+        /// to the sides with the elbows in a V - which is the one thing a guard must not look
+        /// like, since the elbows are what cover the body.
+        public Vector3 ElbowHint = new Vector3(0.3f, -1f, -0.25f);
 
         [Header("Blend")]
         public float BlendSpeed = 9f;
         [Range(0f, 1f)] public float MaxWeight = 1f;
-
-        [Header("Fix-ups")]
-        /// Flip to -1 if the elbows bend the wrong way on your rig.
-        public float ElbowBendSign = 1f;
+        /// An animated guard and an IK guard fighting each other gives you neither, so if the clip
+        /// set has a Guard clip this layer gets out of the way. Clear that slot to use IK instead.
+        public bool DeferToGuardClip = true;
 
         float _weight;
+        FighterAnimation _animation;
         bool _resolved;
         Transform _head;
         Transform _leftUpper;
@@ -56,6 +69,7 @@ namespace TheFighter
                 return;
             }
 
+            _animation = GetComponent<FighterAnimation>();
             _head = ModelAnimator.GetBoneTransform(HumanBodyBones.Head);
             _leftUpper = ModelAnimator.GetBoneTransform(HumanBodyBones.LeftUpperArm);
             _leftLower = ModelAnimator.GetBoneTransform(HumanBodyBones.LeftLowerArm);
@@ -76,6 +90,11 @@ namespace TheFighter
 
             bool guarding = Owner.IsGuarding && !Owner.GuardBroken
                 && Owner.State != ActionState.Down && Owner.State != ActionState.KnockedOut;
+
+            if (DeferToGuardClip && _animation != null && _animation.GuardClipAssigned)
+            {
+                guarding = false;
+            }
 
             _weight = Mathf.MoveTowards(_weight, guarding ? MaxWeight : 0f, BlendSpeed * Time.deltaTime);
 
@@ -134,11 +153,31 @@ namespace TheFighter
             Vector3 direction = toTarget / reach;
             Vector3 reachable = shoulder + direction * distance;
 
-            // The elbow swings outward, away from the ribs.
-            Vector3 bendAxis = Vector3.Cross(direction, Owner.transform.right * side * ElbowBendSign);
+            Transform root = Owner.transform;
+            Vector3 hint = root.right * (ElbowHint.x * side)
+                + root.up * ElbowHint.y
+                + root.forward * ElbowHint.z;
+
+            // Only the part of the hint lying across the shoulder-to-glove line can move the
+            // elbow; anything along that line just points at the glove.
+            Vector3 pole = hint - direction * Vector3.Dot(hint, direction);
+            if (pole.sqrMagnitude < 0.0001f)
+            {
+                pole = -root.up - direction * Vector3.Dot(-root.up, direction);
+                if (pole.sqrMagnitude < 0.0001f)
+                {
+                    pole = root.forward;
+                }
+            }
+            pole.Normalize();
+
+            // Rotating a vector v about Cross(v, pole) carries it toward pole - the derivative of
+            // the rotation at zero is Cross(axis, v), which works out to exactly pole. Get this
+            // cross product backwards and the elbow swings to the opposite side of the circle.
+            Vector3 bendAxis = Vector3.Cross(direction, pole);
             if (bendAxis.sqrMagnitude < 0.0001f)
             {
-                bendAxis = Owner.transform.up;
+                return;
             }
             bendAxis.Normalize();
 
@@ -147,16 +186,20 @@ namespace TheFighter
                 / (2f * upperLength * distance), -1f, 1f);
             float shoulderAngle = Mathf.Acos(cosShoulder) * Mathf.Rad2Deg;
 
-            // Point the whole arm at the target, swing the elbow out of that line by the triangle's
+            // Point the whole arm at the glove, swing the elbow off that line by the triangle's
             // shoulder angle, then close the forearm so the hand arrives.
-            upper.rotation = Quaternion.FromToRotation(lower.position - shoulder, reachable - shoulder)
+            Quaternion upperSolved = Quaternion.AngleAxis(shoulderAngle, bendAxis)
+                * Quaternion.FromToRotation(lower.position - shoulder, reachable - shoulder)
                 * upper.rotation;
-            upper.rotation = Quaternion.AngleAxis(shoulderAngle, bendAxis) * upper.rotation;
-            lower.rotation = Quaternion.FromToRotation(hand.position - lower.position,
+            upper.rotation = upperSolved;
+
+            // Read after the upper arm moved: lower and hand have followed it, so this aims the
+            // forearm from where the elbow now is.
+            Quaternion lowerSolved = Quaternion.FromToRotation(hand.position - lower.position,
                 reachable - lower.position) * lower.rotation;
 
-            upper.rotation = Quaternion.Slerp(upperBefore, upper.rotation, _weight);
-            lower.rotation = Quaternion.Slerp(lowerBefore, lower.rotation, _weight);
+            upper.rotation = Quaternion.Slerp(upperBefore, upperSolved, _weight);
+            lower.rotation = Quaternion.Slerp(lowerBefore, lowerSolved, _weight);
         }
     }
 }

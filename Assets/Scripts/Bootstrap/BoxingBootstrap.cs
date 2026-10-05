@@ -93,7 +93,7 @@ namespace TheFighter
             // A southpaw without mirrored clips would punch with the wrong arm, so the stance is
             // only dealt once those clips exist. Capsules mirror themselves, so they always can.
             bool southpawReady = BoxerModel == null
-                || (SouthpawClips != null && SouthpawClips.Idle != null);
+                || (SouthpawClips != null && BoxerClipSet.HasAny(SouthpawClips.Idle));
 
             Stance playerStance = PlayerStance;
             if (playerStance == Stance.Southpaw && !southpawReady)
