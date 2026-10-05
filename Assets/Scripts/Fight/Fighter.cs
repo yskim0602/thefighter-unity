@@ -93,6 +93,8 @@ namespace TheFighter
         FighterMotor _motor;
 
         readonly Collider[] _overlap = new Collider[16];
+        Vector3 _gloveTrail;
+        bool _gloveTrailValid;
 
         float _phaseTimer;
         float _phaseDuration;
@@ -307,12 +309,15 @@ namespace TheFighter
             return Stats.Reach * punch.RangeMultiplier * _profile.Range;
         }
 
-        /// Centre-to-centre distance at which this punch still connects. Deliberately a touch
-        /// short of the true geometric reach: the AI steps that little bit closer and its punches
-        /// actually land, instead of pawing at the air from the edge of the maths.
+        /// Centre-to-centre distance at which this punch still connects: how far the glove
+        /// travels, plus the two radii that have to touch. Then a little closer still
+        /// (CombatTuning.RangeBite), so the punch lands solidly rather than at the edge of the
+        /// maths. Reads the hurtbox constants directly - a range that disagrees with the hit
+        /// volumes is how you get fighters pawing at air, or standing inside each other.
         public float EffectiveRange(PunchDefinition punch)
         {
-            return PunchReach(punch) + 0.05f + punch.HitRadius + 0.18f;
+            return PunchReach(punch) + punch.HitRadius + CombatTuning.HeadHurtboxRadius
+                - CombatTuning.RangeBite;
         }
 
         // ------------------------------------------------------------------
@@ -600,6 +605,8 @@ namespace TheFighter
             ActiveHand = punch.Hand;
             _punchLanded = false;
             EnterPhase(ActionState.Windup, punch.WindupTime * PunchSpeedScale());
+            TrackGlove();
+            StepIntoRange(punch);
 
             if (Threw != null)
             {
@@ -643,6 +650,7 @@ namespace TheFighter
             {
                 PunchTrack = 0f;
                 RefreshRig(dt);
+                _gloveTrailValid = false;
                 return;
             }
 
@@ -685,6 +693,7 @@ namespace TheFighter
             {
                 PunchTrack = 0f;
                 RefreshRig(dt);
+                _gloveTrailValid = false;
                 return;
             }
 
@@ -705,6 +714,8 @@ namespace TheFighter
                     EnterPhase(ActionState.Recovery, ActivePunch.RecoveryTime * RecoveryScale());
                 }
             }
+
+            TrackGlove();
         }
 
         float TrackForPhase(float p)
@@ -756,6 +767,50 @@ namespace TheFighter
         // Hitting and being hit
         // ------------------------------------------------------------------
 
+        /// Remembers where the glove was, so the next frame's hit test can sweep from here.
+        void TrackGlove()
+        {
+            if (Rig == null || ActivePunch == null)
+            {
+                _gloveTrailValid = false;
+                return;
+            }
+
+            _gloveTrail = Rig.GetGloveWorldPosition(ActiveHand);
+            _gloveTrailValid = true;
+        }
+
+        /// A punch thrown from a step too far out carries the fighter in instead of pawing at the
+        /// air. Boxers step into their shots, and without this a press at the wrong moment reads
+        /// as the input having been ignored - the punch plays, and nothing is there.
+        ///
+        /// Only closes a real shortfall, and never more than StepInMax: this is a step, not a
+        /// lunge across the ring, and it must not become a way to cover ground for free.
+        void StepIntoRange(PunchDefinition punch)
+        {
+            if (Opponent == null || Motor == null
+                || Opponent.State == ActionState.Down || Opponent.State == ActionState.KnockedOut)
+            {
+                return;
+            }
+
+            Vector3 flat = Opponent.transform.position - transform.position;
+            flat.y = 0f;
+            float gap = flat.magnitude;
+            if (gap < 0.0001f)
+            {
+                return;
+            }
+
+            float shortfall = gap - EffectiveRange(punch);
+            if (shortfall <= 0.01f || shortfall > CombatTuning.StepInReach)
+            {
+                return;
+            }
+
+            Motor.AddStep(flat / gap, Mathf.Min(shortfall, CombatTuning.StepInMax));
+        }
+
         void TryLand()
         {
             if (Opponent == null || Rig == null || ActivePunch == null)
@@ -764,7 +819,14 @@ namespace TheFighter
             }
 
             Vector3 point = Rig.GetGloveWorldPosition(ActiveHand);
-            int count = Physics.OverlapSphereNonAlloc(point, ActivePunch.HitRadius, _overlap,
+            Vector3 from = _gloveTrailValid ? _gloveTrail : point;
+
+            // Sweep the glove's path, not a point on it. Two reasons, and the hurtboxes are small
+            // enough now that both bite: a strike crosses a good part of a head in one frame, and
+            // at close range it finishes *behind* the head entirely. A point test calls the first
+            // a miss by luck of timing and the second a miss outright, which is exactly the
+            // "punched straight through him" complaint.
+            int count = Physics.OverlapCapsuleNonAlloc(from, point, ActivePunch.HitRadius, _overlap,
                 ~0, QueryTriggerInteraction.Collide);
 
             Hurtbox best = null;

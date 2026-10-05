@@ -444,10 +444,10 @@ namespace TheFighter
         {
             GameObject go = new GameObject("Hurtbox_Head");
             go.transform.SetParent(parent, false);
-            go.transform.localPosition = new Vector3(0f, 1.56f, 0f);
+            go.transform.localPosition = new Vector3(0f, CombatTuning.HeadHurtboxHeight, 0f);
 
             SphereCollider collider = go.AddComponent<SphereCollider>();
-            collider.radius = 0.20f;
+            collider.radius = CombatTuning.HeadHurtboxRadius;
             collider.isTrigger = true;
 
             Hurtbox box = go.AddComponent<Hurtbox>();
@@ -461,12 +461,12 @@ namespace TheFighter
         {
             GameObject go = new GameObject("Hurtbox_Body");
             go.transform.SetParent(parent, false);
-            go.transform.localPosition = new Vector3(0f, 1.00f, 0f);
+            go.transform.localPosition = new Vector3(0f, CombatTuning.BodyHurtboxCentre, 0f);
 
             CapsuleCollider collider = go.AddComponent<CapsuleCollider>();
             collider.direction = 1;
-            collider.height = 0.95f;
-            collider.radius = 0.27f;
+            collider.height = CombatTuning.BodyHurtboxHeight;
+            collider.radius = CombatTuning.BodyHurtboxRadius;
             collider.isTrigger = true;
 
             Hurtbox box = go.AddComponent<Hurtbox>();

@@ -52,7 +52,7 @@ namespace TheFighter
             RecoveryTime = 0.18f,
             RangeMultiplier = 1.05f,
             GuardPierce = 0f,
-            HitRadius = 0.17f,
+            HitRadius = 0.095f,
             AimBias = 0.85f,
             LateralArc = 0f,
             RiseArc = 0f
@@ -70,7 +70,7 @@ namespace TheFighter
             RecoveryTime = 0.28f,
             RangeMultiplier = 1.15f,
             GuardPierce = 0.05f,
-            HitRadius = 0.18f,
+            HitRadius = 0.10f,
             AimBias = 0.8f,
             LateralArc = 0f,
             RiseArc = 0f
@@ -88,7 +88,7 @@ namespace TheFighter
             RecoveryTime = 0.34f,
             RangeMultiplier = 0.85f,
             GuardPierce = 0.20f,
-            HitRadius = 0.20f,
+            HitRadius = 0.11f,
             AimBias = 0.35f,
             LateralArc = 0.55f,
             RiseArc = 0f
@@ -106,7 +106,7 @@ namespace TheFighter
             RecoveryTime = 0.42f,
             RangeMultiplier = 0.75f,
             GuardPierce = 0.35f,
-            HitRadius = 0.20f,
+            HitRadius = 0.11f,
             AimBias = 0.95f,
             LateralArc = 0.1f,
             RiseArc = 0.45f

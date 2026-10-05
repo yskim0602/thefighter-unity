@@ -10,6 +10,7 @@ namespace TheFighter
     {
         public float TurnSpeed = 12f;
         public float Acceleration = 14f;
+        public float ImpulseDecay = 6f;
 
         CharacterController _controller;
         Vector3 _velocity;
@@ -62,7 +63,8 @@ namespace TheFighter
             Vector3 wanted = (transform.right * move.x + transform.forward * move.y) * speed;
             _velocity = Vector3.Lerp(_velocity, wanted, 1f - Mathf.Exp(-Acceleration * deltaTime));
 
-            _impulse = Vector3.Lerp(_impulse, Vector3.zero, 1f - Mathf.Exp(-6f * deltaTime));
+            _impulse = Vector3.Lerp(_impulse, Vector3.zero,
+                1f - Mathf.Exp(-ImpulseDecay * deltaTime));
 
             if (_controller.isGrounded && _verticalSpeed < 0f)
             {
@@ -75,6 +77,14 @@ namespace TheFighter
             _controller.Move(delta);
 
             ClampToRing();
+        }
+
+        /// Adds the impulse that carries the fighter roughly this far before it bleeds away. The
+        /// decay is exponential, so an impulse travels its speed over the decay rate - doing that
+        /// arithmetic here keeps the rate from leaking into every caller that wants a step.
+        public void AddStep(Vector3 direction, float distance)
+        {
+            AddImpulse(direction * (distance * ImpulseDecay));
         }
 
         public void AddImpulse(Vector3 impulse)

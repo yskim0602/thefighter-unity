@@ -81,9 +81,35 @@ namespace TheFighter
         /// How far "behind" the rest pose the glove loads during the windup, on the same
         /// normalised track the strike then runs 0 -> 1 along.
         public const float PunchLoadTrack = 0.18f;
-        /// Hit tests only start once the glove is most of the way out, which keeps the first-person
-        /// viewmodel pose from changing where a punch actually lands.
-        public const float PunchHitTrackThreshold = 0.55f;
+        /// Hit tests only start once the glove is on its way out, which keeps the first-person
+        /// viewmodel pose from changing where a punch actually lands. Low enough that the swept
+        /// test gets most of the glove's path: at close range the glove reaches the head early and
+        /// finishes past it.
+        public const float PunchHitTrackThreshold = 0.40f;
+
+        // --- Hit volumes ---------------------------------------------------
+        // The hurtboxes are the fighter's silhouette, not a generous bubble around it, and a
+        // glove's hit radius is a glove. They used to be roughly twice this, which let a punch
+        // land with its surface 9cm clear of the skin - a swing through open air that still made
+        // a thud. Range is tuned against these numbers, so EffectiveRange reads them directly
+        // rather than carrying its own fudge factor.
+        public const float HeadHurtboxRadius = 0.13f;
+        public const float HeadHurtboxHeight = 1.56f;
+        public const float BodyHurtboxRadius = 0.20f;
+        /// Belt to sternum. It used to run from the knees to the chin.
+        public const float BodyHurtboxHeight = 0.56f;
+        public const float BodyHurtboxCentre = 1.18f;
+
+        // --- Reach ---------------------------------------------------------
+        /// How far inside the geometric limit a fighter steps before throwing, so the punch lands
+        /// solidly instead of at the very edge of the maths.
+        public const float RangeBite = 0.06f;
+        /// A punch thrown from beyond contact range carries the fighter in rather than pawing at
+        /// the air - real boxers step into their shots, and without it a key press at the wrong
+        /// moment just reads as the input being ignored. Only this far, though: a step is a step,
+        /// not a lunge across the ring.
+        public const float StepInReach = 0.45f;
+        public const float StepInMax = 0.30f;
 
         // --- Head movement -------------------------------------------------
         // Leaning and ducking move the head hurtbox itself, so slipping a punch is a real miss
