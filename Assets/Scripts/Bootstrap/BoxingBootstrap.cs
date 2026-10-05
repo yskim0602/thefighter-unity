@@ -380,18 +380,20 @@ namespace TheFighter
             rig.HandSource = animator;
             rig.ProceduralMotionWeight = Mathf.Clamp01(ModelProceduralMotion);
 
+            // Added before GuardPose on purpose: LateUpdate runs in the order components were
+            // added, and the hip height fix has to land before the arm IK reads bone positions.
+            FighterAnimation animation = fighter.gameObject.AddComponent<FighterAnimation>();
+            animation.Owner = fighter;
+            animation.ModelAnimator = animator;
+            animation.OrthodoxClips = OrthodoxClips;
+            animation.SouthpawClips = SouthpawClips;
+
             if (UseIkGuard)
             {
                 GuardPose guard = fighter.gameObject.AddComponent<GuardPose>();
                 guard.Owner = fighter;
                 guard.ModelAnimator = animator;
             }
-
-            FighterAnimation animation = fighter.gameObject.AddComponent<FighterAnimation>();
-            animation.Owner = fighter;
-            animation.ModelAnimator = animator;
-            animation.OrthodoxClips = OrthodoxClips;
-            animation.SouthpawClips = SouthpawClips;
         }
 
         /// Mixamo exports in centimetres. If the FBX importer's unit conversion did not take, the

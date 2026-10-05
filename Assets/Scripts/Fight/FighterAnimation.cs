@@ -82,6 +82,16 @@ namespace TheFighter
 
         BoxerClipSet _clips;
 
+        [Header("Hip height")]
+        /// Mixamo clips disagree about how high the hips sit, because each one's Root Transform
+        /// Position (Y) is measured from a different reference. Switching from idle to a punch then
+        /// pops the whole body upward, which reads as the fighter hopping on every shot. The proper
+        /// fix is per-clip import settings - Root Transform Position (Y), Bake Into Pose on, Based
+        /// Upon Feet - but that is one clip at a time across every file, so this is the
+        /// one-checkbox version. Measured against the model's own transform, so leaning, ducking
+        /// and the knockdown pose (which all live above it) still work.
+        [Range(0f, 1f)] public float HipHeightLock = 1f;
+
         [Header("Blending")]
         /// Weights are damped rather than set outright. Without this the stance/footwork mix
         /// follows the AI's frame-to-frame jitter and the skeleton visibly shivers.
@@ -119,6 +129,10 @@ namespace TheFighter
         float[] _smoothed;
         bool[] _assigned;
         bool _built;
+
+        Transform _hips;
+        float _hipHeight;
+        bool _hipCaptured;
 
         float _baseClock;
         float _slipClock;
@@ -237,6 +251,8 @@ namespace TheFighter
             {
                 return;
             }
+
+            StabiliseHipHeight();
 
             float dt = Time.deltaTime;
             _baseClock += dt;
@@ -405,6 +421,38 @@ namespace TheFighter
                 return;
             }
             _weights[index] += weight;
+        }
+
+        /// Pulls the hips back to the height they sat at on the first frame, cancelling the
+        /// per-clip disagreement without touching anything the clips meant to do horizontally.
+        void StabiliseHipHeight()
+        {
+            if (HipHeightLock <= 0.001f || ModelAnimator == null)
+            {
+                return;
+            }
+
+            if (_hips == null)
+            {
+                _hips = ModelAnimator.GetBoneTransform(HumanBodyBones.Hips);
+                if (_hips == null)
+                {
+                    return;
+                }
+            }
+
+            Transform reference = ModelAnimator.transform;
+            Vector3 local = reference.InverseTransformPoint(_hips.position);
+
+            if (!_hipCaptured)
+            {
+                _hipHeight = local.y;
+                _hipCaptured = true;
+                return;
+            }
+
+            local.y = Mathf.Lerp(local.y, _hipHeight, HipHeightLock);
+            _hips.position = reference.TransformPoint(local);
         }
 
         static bool IsAction(int index)
