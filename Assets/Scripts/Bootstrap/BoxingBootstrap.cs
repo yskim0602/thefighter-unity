@@ -311,6 +311,32 @@ namespace TheFighter
 
             float height = FitHeight(model, modelRenderers);
 
+            Animator animator = model.GetComponent<Animator>();
+            if (animator == null)
+            {
+                animator = model.GetComponentInChildren<Animator>();
+            }
+
+            Debug.Log("BoxingBootstrap: attached " + BoxerModel.name + " to " + model.transform.parent.parent.name
+                + " - measured height " + height.ToString("0.00") + "m, final scale "
+                + model.transform.localScale.x.ToString("0.000")
+                + ", renderers " + modelRenderers.Length
+                + ", animator " + (animator != null ? (animator.isHuman ? "Humanoid" : "not Humanoid") : "MISSING"));
+
+            // Without a Humanoid avatar nothing can pose the model, so it would stand in its bind
+            // pose - arms out, sliding around the ring. A T-posed statue is a worse failure than
+            // the capsules it replaced, so hand the fight back to them.
+            if (animator == null || !animator.isHuman)
+            {
+                Debug.LogWarning("BoxingBootstrap: " + BoxerModel.name + " has no Humanoid avatar"
+                    + (animator == null ? " (no Animator at all)" : " (its rig is Generic)")
+                    + ", so it cannot be animated and the capsules are being used instead. "
+                    + "Select the FBX in the Project window, go to the Rig tab, set Animation Type "
+                    + "to Humanoid and Avatar Definition to Create From This Model, then press Apply.");
+                model.SetActive(false);
+                return;
+            }
+
             for (int i = 0; i < placeholders.Length; i++)
             {
                 if (placeholders[i] != null)
@@ -321,26 +347,6 @@ namespace TheFighter
 
             // First person hides your own body, which is now the model's renderers.
             fighter.BodyRenderers = modelRenderers;
-
-            Animator animator = model.GetComponent<Animator>();
-            if (animator == null)
-            {
-                animator = model.GetComponentInChildren<Animator>();
-            }
-
-            Debug.Log("BoxingBootstrap: attached " + BoxerModel.name + " to " + fighter.FighterName
-                + " - measured height " + height.ToString("0.00") + "m, final scale "
-                + model.transform.localScale.x.ToString("0.000")
-                + ", renderers " + modelRenderers.Length
-                + ", animator " + (animator != null ? (animator.isHuman ? "Humanoid" : "not Humanoid") : "MISSING"));
-
-            if (animator == null)
-            {
-                Debug.LogWarning("BoxingBootstrap: " + BoxerModel.name + " has no Animator, so it "
-                    + "cannot be animated. Select the FBX, set Rig > Animation Type to Humanoid, "
-                    + "Avatar Definition to Create From This Model, and press Apply.");
-                return;
-            }
 
             rig.HandSource = animator;
 
