@@ -181,6 +181,10 @@ namespace TheFighter
             Stamina = MaxStamina;
             GuardGauge = CombatTuning.GuardGaugeMax;
             HeadTrauma = 0f;
+            HeadDamageTaken = 0f;
+            BodyDamageTaken = 0f;
+            HeadDamageBlocked = 0f;
+            BodyDamageBlocked = 0f;
             Knockdowns = 0;
             TotalKnockdowns = 0;
             State = ActionState.Free;
@@ -289,6 +293,15 @@ namespace TheFighter
         /// Concussive load, 0 to 1. Reaching 1 is a knockdown. Decays, so it measures punches
         /// landed *together* rather than punches landed.
         public float HeadTrauma { get; private set; }
+
+        /// Damage taken per region across the whole fight. Health is one pool and tells you
+        /// nothing about where it went, but in boxing where it went is the story: a man who has
+        /// been worked downstairs all night and a man who has been hit on the chin are in
+        /// completely different trouble. Kept for the fight, not the round - that is the point.
+        public float HeadDamageTaken { get; private set; }
+        public float BodyDamageTaken { get; private set; }
+        public float HeadDamageBlocked { get; private set; }
+        public float BodyDamageBlocked { get; private set; }
 
         /// 0 while there is still something left, 1 when a fighter is out on his feet. Scales the
         /// guard, the footwork and the timing - every one of them for the worse.
@@ -1051,6 +1064,17 @@ namespace TheFighter
 
             Health = Mathf.Max(0f, Health - damage);
             evt.Damage = damage;
+
+            if (evt.Result == HitResult.Blocked)
+            {
+                if (zone == HitZone.Head) { HeadDamageBlocked += damage; }
+                else { BodyDamageBlocked += damage; }
+            }
+            else if (evt.Result == HitResult.Clean)
+            {
+                if (zone == HitZone.Head) { HeadDamageTaken += damage; }
+                else { BodyDamageTaken += damage; }
+            }
 
             Vector3 push = transform.position - attacker.transform.position;
             push.y = 0f;

@@ -63,6 +63,10 @@ namespace TheFighter
         float _crouchLost;
         float _peakCommit;
         float _peakLunge;
+        /// How far the glove was from where it was aimed, at the moment of furthest extension.
+        /// "The punch goes off to the left" is a sentence; this is the distance.
+        float _aimError = -1f;
+        float _worstAim;
         Vector3 _pivotAtStart;
 
         // Worst since reset
@@ -184,6 +188,7 @@ namespace TheFighter
                 _peakLunge = 0f;
                 _pivotAtStart = Target.Rig != null && Target.Rig.BodyPivot != null
                     ? Target.Rig.BodyPivot.localPosition : Vector3.zero;
+                _aimError = -1f;
                 _punchesSeen++;
             }
 
@@ -195,6 +200,22 @@ namespace TheFighter
 
                 if (Target.Rig != null)
                 {
+                    // Sampled at full extension, where the aim is meant to have won.
+                    if (Target.PunchTrack > 0.85f && Target.Opponent != null)
+                    {
+                        Vector3 glove = Target.Rig.GetGloveWorldPosition(Target.ActiveHand);
+                        Vector3 aimed = Target.Opponent.HeadHurtbox != null
+                            ? Target.Opponent.HeadHurtbox.position
+                            : Target.Opponent.transform.position
+                                + Vector3.up * CombatTuning.HeadHurtboxHeight;
+                        Vector3 low = Target.Opponent.transform.position
+                            + Vector3.up * CombatTuning.BodyHurtboxCentre;
+                        aimed = Vector3.Lerp(low, aimed, Mathf.Clamp01(Target.AimHeight));
+
+                        float error = Vector3.Distance(glove, aimed);
+                        _aimError = _aimError < 0f ? error : Mathf.Min(_aimError, error);
+                    }
+
                     _peakCommit = Mathf.Max(_peakCommit, Target.Rig.Commitment);
                     if (Target.Rig.BodyPivot != null)
                     {
@@ -212,6 +233,10 @@ namespace TheFighter
 
             _punchActive = false;
             _worstCrouchLost = Mathf.Max(_worstCrouchLost, _crouchLost);
+            if (_aimError >= 0f)
+            {
+                _worstAim = Mathf.Max(_worstAim, _aimError);
+            }
             if (_peakCommit < CommitmentFloor || _peakLunge < 0.001f)
             {
                 _punchesWithoutDrive++;
@@ -256,6 +281,7 @@ namespace TheFighter
             _worstFoot = 0f;
             _worstSnap = 0f;
             _worstCrouchLost = 0f;
+            _worstAim = 0f;
             _punchesWithoutDrive = 0;
             _punchesSeen = 0;
         }
@@ -281,7 +307,7 @@ namespace TheFighter
             _mono.fontSize = Mathf.RoundToInt(13 * _scale);
 
             float w = 430f * _scale;
-            float h = 250f * _scale;
+            float h = 286f * _scale;
             Rect area = new Rect(Screen.width - w - 12f * _scale,
                 Screen.height - h - 12f * _scale, w, h);
 
@@ -329,6 +355,15 @@ namespace TheFighter
                 _peakCommit, _peakLunge, droveLast ? "OK" : "NO WEIGHT TRANSFER"),
                 droveLast ? new Color(0.55f, 0.85f, 0.6f) : new Color(1f, 0.45f, 0.4f));
 
+            // Contact needs the glove within about 0.23m of the head centre, so that is the line
+            // between "aimed at him" and "aimed past him".
+            bool aimed = _aimError >= 0f && _aimError < 0.25f;
+            Write(x, ref y, line, string.Format("aim     {0}   {1}",
+                _aimError < 0f ? "  --  " : _aimError.ToString("0.000") + "m",
+                _aimError < 0f ? "no punch yet" : (aimed ? "on target" : "MISSING THE TARGET")),
+                _aimError < 0f ? new Color(0.65f, 0.7f, 0.75f)
+                    : aimed ? new Color(0.55f, 0.85f, 0.6f) : new Color(1f, 0.45f, 0.4f));
+
             Write(x, ref y, line, string.Format("crouch  held {0:0.00} -> lost {1:0.00}   {2}",
                 _crouchAtStart, _crouchLost, _crouchLost > 0.05f ? "POSTURE OVERRIDDEN" : "HELD"),
                 _crouchLost > 0.05f ? new Color(1f, 0.45f, 0.4f) : new Color(0.55f, 0.85f, 0.6f));
@@ -339,6 +374,7 @@ namespace TheFighter
                 _worstHip, _worstFoot, _worstSnap), Worst());
             Write(x, ref y, line, string.Format("crouch lost {0:0.00}   punches with no drive {1}/{2}",
                 _worstCrouchLost, _punchesWithoutDrive, _punchesSeen), Worst());
+            Write(x, ref y, line, string.Format("worst aim error {0:0.000}m", _worstAim), Worst());
         }
 
         static Font FindMono()

@@ -75,6 +75,9 @@ namespace TheFighter
         /// Starts the posture probe visible. P toggles it in play, O resets its worst-case
         /// readings. It measures nothing it can change.
         public bool PostureProbeOn;
+        /// Starts the damage map visible. B toggles it. Shows accumulated damage per region on
+        /// each fighter, which one health bar cannot say.
+        public bool DamageMapOn;
 
         [Header("Gloves")]
         /// Leave empty for gloves built from primitives. Drop a glove model here to replace them -
@@ -197,6 +200,14 @@ namespace TheFighter
             PostureProbe probe = player.gameObject.AddComponent<PostureProbe>();
             probe.Target = player;
             probe.Visible = PostureProbeOn;
+
+            // Off until B. Shows where damage has landed on the body it landed on, standing in
+            // for the swelling and cuts a real model will carry later.
+            DamageMap map = directorGo.AddComponent<DamageMap>();
+            map.Player = player;
+            map.Enemy = enemy;
+            map.View = camera;
+            map.Visible = DamageMapOn;
 
             Player = player;
             Enemy = enemy;

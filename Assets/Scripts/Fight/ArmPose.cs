@@ -25,6 +25,22 @@ namespace TheFighter
         public Fighter Owner;
         public Animator ModelAnimator;
 
+        /// A guard is not one pose. Boxing has several, and which one you are in says what you
+        /// are expecting - hands out front against straight punching, clamped to the ears against
+        /// hooks, elbows dropped against the body. Picking the right one is most of what makes a
+        /// defence read as a defence rather than as two arms held up.
+        public enum GuardShape
+        {
+            /// Hands at the cheeks, slightly forward. The default, against straight punching.
+            High,
+            /// Tight to the temples with the elbows up, and the near hand clamped over the ear on
+            /// the side the hook is coming from. A high guard does nothing about a hook, which
+            /// arrives around it rather than through it.
+            HookCover,
+            /// Elbows dropped onto the ribs. Costs the head, which is the trade.
+            BodyCover
+        }
+
         [Header("Guard - where the gloves sit, relative to the head")]
         /// x is outward from the centre line, y up, z forward. Metres. Measured from the head
         /// *bone*, which on a Mixamo rig sits around the jaw rather than at the middle of the
@@ -32,6 +48,19 @@ namespace TheFighter
         public Vector3 HandOffset = new Vector3(0.11f, 0.02f, 0.13f);
         /// The lead hand carries a little further forward, as it does in a real stance.
         public float LeadForwardBias = 0.04f;
+
+        [Header("Guard - hook cover")]
+        /// Against a hook: tighter in, higher, and hard against the head.
+        public Vector3 HookHandOffset = new Vector3(0.085f, 0.07f, 0.045f);
+        /// The glove on the side the hook comes from goes further still - over the ear.
+        public Vector3 HookNearExtra = new Vector3(0.015f, 0.05f, -0.03f);
+        /// Elbows come up in front of the face rather than hanging at the ribs.
+        public Vector3 HookElbowHint = new Vector3(0.5f, -0.35f, 0.55f);
+
+        [Header("Guard - body cover")]
+        /// Elbows onto the ribs, hands still high enough to be worth something.
+        public Vector3 BodyHandOffset = new Vector3(0.1f, -0.04f, 0.08f);
+        public Vector3 BodyElbowHint = new Vector3(0.12f, -1f, 0.1f);
         /// How much the hands are held at the cheeks even when the guard button is not down.
         [Range(0f, 1f)] public float IdleGuardWeight = 0.45f;
         [Range(0f, 1f)] public float MaxWeight = 1f;
@@ -49,10 +78,10 @@ namespace TheFighter
         /// 0 leaves punches aimed wherever the clip aimed them. 1 drags the hand all the way onto
         /// the target, which lands every shot but straightens a hook into a jab. The default keeps
         /// most of the clip's shape while fixing the address.
-        [Range(0f, 1f)] public float AimWeight = 0.8f;
+        [Range(0f, 1f)] public float AimWeight = 0.95f;
         /// Where on the extension the aim starts blending in, on Fighter.PunchTrack. Early enough
         /// to steer the shot, late enough that the wind-up is still the clip's.
-        public float AimStartTrack = 0.3f;
+        public float AimStartTrack = 0.2f;
         /// How much of that aim a feint gets. Some, so it reads as a punch; not all, because a
         /// feint only works if it cannot be told from one in time.
         [Range(0f, 1f)] public float FeintAimWeight = 0.5f;
@@ -85,6 +114,9 @@ namespace TheFighter
 
         float _leftWeight;
         float _rightWeight;
+        GuardShape _shape = GuardShape.High;
+        float _hookSide;
+        float _shapeHold;
         bool _resolved;
         FighterAnimation _animation;
         Transform _head;
@@ -160,8 +192,14 @@ namespace TheFighter
             // and the whole value of one is that it cannot be told apart in time.
             float aimScale = Owner.IsFeinting ? FeintAimWeight : 1f;
 
-            bool leftThrowing = Owner.ActivePunch != null && Owner.Rig != null
-                && Owner.Rig.IsLeftHand(Owner.ActiveHand);
+            // Per side, and both require a punch to exist. This used to be computed as
+            // `leftThrowing` and `!leftThrowing`, so with no punch at all the right arm was told
+            // it was throwing - its guard weight was driven to zero and the right hand never came
+            // up. That is why the guard only ever looked like one hand.
+            bool punching = Owner.ActivePunch != null && !floored;
+            bool leftIsActive = Owner.Rig != null && Owner.Rig.IsLeftHand(Owner.ActiveHand);
+            bool leftThrowing = punching && leftIsActive;
+            bool rightThrowing = punching && !leftIsActive;
 
             float aim = 0f;
             if (aiming)
@@ -170,11 +208,14 @@ namespace TheFighter
                 aim = Mathf.SmoothStep(0f, 1f, t) * AimWeight * aimScale;
             }
 
-            SolveSide(true, leftThrowing, aim, guardTarget, ref _leftWeight);
-            SolveSide(false, !leftThrowing, aim, guardTarget, ref _rightWeight);
+            GuardShape shape = ChooseShape();
+
+            SolveSide(true, leftThrowing, aim, guardTarget, shape, ref _leftWeight);
+            SolveSide(false, rightThrowing, aim, guardTarget, shape, ref _rightWeight);
         }
 
-        void SolveSide(bool left, bool throwing, float aim, float guardTarget, ref float weight)
+        void SolveSide(bool left, bool throwing, float aim, float guardTarget, GuardShape shape,
+            ref float weight)
         {
             Transform upper = left ? _leftUpper : _rightUpper;
             Transform lower = left ? _leftLower : _rightLower;
@@ -208,9 +249,46 @@ namespace TheFighter
 
             if (weight > 0.001f)
             {
-                TwoBoneIk.Solve(upper, lower, hand, GuardTarget(left),
-                    HintFor(GuardElbowHint, side), weight);
+                TwoBoneIk.Solve(upper, lower, hand, GuardTarget(left, shape),
+                    HintFor(ElbowHintFor(shape), side), weight);
             }
+        }
+
+        /// Reads the incoming punch and picks the guard for it. Nothing random: the shape is a
+        /// statement about what the fighter thinks is coming, so it follows the threat.
+        GuardShape ChooseShape()
+        {
+            Fighter foe = Owner.Opponent;
+            PunchDefinition incoming = foe != null ? foe.ActivePunch : null;
+
+            if (incoming == null)
+            {
+                // Nothing in the air: hold the shape a moment rather than snapping back, so a
+                // combination does not flicker the guard between poses.
+                _shapeHold = Mathf.MoveTowards(_shapeHold, 0f, Time.deltaTime);
+                return _shapeHold > 0f ? _shape : GuardShape.High;
+            }
+
+            _shapeHold = 0.35f;
+
+            if (incoming.Kind == PunchKind.Hook)
+            {
+                _shape = GuardShape.HookCover;
+                // Which ear to cover: the hand it is thrown with decides, mirrored for a southpaw
+                // since his lead is the other arm.
+                bool fromMyLeft = foe.Rig != null && !foe.Rig.IsLeftHand(foe.ActiveHand);
+                _hookSide = fromMyLeft ? -1f : 1f;
+                return _shape;
+            }
+
+            if (foe.AimHeight < 0.5f || incoming.Kind == PunchKind.Uppercut)
+            {
+                _shape = GuardShape.BodyCover;
+                return _shape;
+            }
+
+            _shape = GuardShape.High;
+            return _shape;
         }
 
         /// Turns the shoulder a fraction of the way toward the target, so the reach starts at the
@@ -240,16 +318,48 @@ namespace TheFighter
             return root.right * (hint.x * side) + root.up * hint.y + root.forward * hint.z;
         }
 
-        Vector3 GuardTarget(bool left)
+        Vector3 ElbowHintFor(GuardShape shape)
+        {
+            switch (shape)
+            {
+                case GuardShape.HookCover: return HookElbowHint;
+                case GuardShape.BodyCover: return BodyElbowHint;
+                default: return GuardElbowHint;
+            }
+        }
+
+        Vector3 GuardTarget(bool left, GuardShape shape)
         {
             Transform root = Owner.transform;
-            bool isLead = (Owner.CurrentStance == Stance.Orthodox) == left;
-            float forward = HandOffset.z + (isLead ? LeadForwardBias : 0f);
+            float side = left ? -1f : 1f;
+            Vector3 offset;
+
+            switch (shape)
+            {
+                case GuardShape.HookCover:
+                    offset = HookHandOffset;
+                    // The glove on the side the hook is coming from clamps over the ear.
+                    if (Mathf.Approximately(_hookSide, side))
+                    {
+                        offset += HookNearExtra;
+                    }
+                    break;
+
+                case GuardShape.BodyCover:
+                    offset = BodyHandOffset;
+                    break;
+
+                default:
+                    offset = HandOffset;
+                    bool isLead = (Owner.CurrentStance == Stance.Orthodox) == left;
+                    offset.z += isLead ? LeadForwardBias : 0f;
+                    break;
+            }
 
             return _head.position
-                + root.right * (HandOffset.x * (left ? -1f : 1f))
-                + root.up * HandOffset.y
-                + root.forward * forward;
+                + root.right * (offset.x * side)
+                + root.up * offset.y
+                + root.forward * offset.z;
         }
 
         /// Where the wrist has to be for the *glove* to be on the target, since the solver places

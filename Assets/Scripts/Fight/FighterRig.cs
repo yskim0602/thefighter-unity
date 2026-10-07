@@ -110,6 +110,21 @@ namespace TheFighter
         /// tell "no weight transfer" apart from "weight transfer you cannot see".
         public float Commitment { get; private set; }
 
+        /// 0 to 1 through the current hit reaction, and which zone caused it. FighterAnimation
+        /// scrubs a hit clip along this, so a clip and the procedural recoil stay on one clock
+        /// instead of each running a reaction of its own.
+        public float RecoilProgress
+        {
+            get
+            {
+                return _recoilDuration > 0f && _recoilTimer > 0f
+                    ? 1f - Mathf.Clamp01(_recoilTimer / _recoilDuration)
+                    : -1f;
+            }
+        }
+
+        public HitZone RecoilZone { get; private set; }
+
         [Header("Head movement")]
         /// Not scaled by ProceduralMotionWeight: there are no lean or duck clips, so this is the
         /// only thing showing the player that their head actually moved.
@@ -542,6 +557,8 @@ namespace TheFighter
             {
                 return;
             }
+
+            RecoilZone = zone;
 
             Vector3 local = worldPushDirection.sqrMagnitude > 0.0001f
                 ? transform.InverseTransformDirection(worldPushDirection.normalized)

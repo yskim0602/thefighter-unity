@@ -45,8 +45,16 @@ namespace TheFighter
         [Header("Stance (looping)")]
         /// The one slot that must not be empty: an unweighted Humanoid snaps to T-pose.
         public ClipVariant[] Idle = new ClipVariant[0];
-        /// Leave empty to let ArmPose raise the gloves with IK instead.
+        /// The ordinary high guard, hands at the cheeks. Leave empty to let ArmPose raise the
+        /// gloves with IK instead.
         public ClipVariant[] Guard = new ClipVariant[0];
+        /// Covering up against hooks - tight to the temples, elbows up. A high guard does nothing
+        /// about a hook, which comes around it rather than through it, so this is a different
+        /// pose rather than the same one held harder. Empty falls back to Guard, and ArmPose
+        /// reshapes the arms either way.
+        public ClipVariant[] GuardHook = new ClipVariant[0];
+        /// Elbows dropped onto the ribs against body work. Empty falls back to Guard.
+        public ClipVariant[] GuardBody = new ClipVariant[0];
 
         [Header("Footwork (looping) - all four blend, so diagonals use two at once")]
         public ClipVariant[] StepForward = new ClipVariant[0];
@@ -65,6 +73,11 @@ namespace TheFighter
 
         [Header("Reactions")]
         public ClipVariant[] Slip = new ClipVariant[0];
+        /// Taking one clean. Driven by FighterRig's recoil clock, so a clip and the procedural
+        /// head snap stay on one timeline instead of each running a reaction of its own. Empty
+        /// leaves the procedural reaction doing the whole job, as now.
+        public ClipVariant[] HitHead = new ClipVariant[0];
+        public ClipVariant[] HitBody = new ClipVariant[0];
         public ClipVariant[] Down = new ClipVariant[0];
 
         public ClipVariant[] PunchVariants(PunchKind kind)
@@ -193,6 +206,8 @@ namespace TheFighter
         {
             Idle,
             Guard,
+            GuardHook,
+            GuardBody,
             StepForward,
             StepBack,
             StepLeft,
@@ -235,6 +250,8 @@ namespace TheFighter
         readonly int[] _poses = new int[(int)Pose.Count];
         readonly List<int>[] _punches = new List<int>[4];
         readonly List<int> _slip = new List<int>();
+        readonly List<int> _hitHead = new List<int>();
+        readonly List<int> _hitBody = new List<int>();
         readonly List<int> _down = new List<int>();
         AvatarMask _upperMask;
         bool _built;
@@ -260,6 +277,7 @@ namespace TheFighter
         float _lastProgress;
         int _punchVariant = -1;
         int _slipVariant = -1;
+        int _hitVariant = -1;
         int _downVariant = -1;
 
         /// Picked once, because a stance is chosen before the bell and never changes mid-fight.
@@ -317,6 +335,8 @@ namespace TheFighter
             // is free characterisation.
             _poses[(int)Pose.Idle] = AddLoop(_clips.Idle, false);
             _poses[(int)Pose.Guard] = AddLoop(_clips.Guard, false);
+            _poses[(int)Pose.GuardHook] = AddLoop(_clips.GuardHook, false);
+            _poses[(int)Pose.GuardBody] = AddLoop(_clips.GuardBody, false);
             _poses[(int)Pose.StepForward] = AddLoop(_clips.StepForward, true);
             _poses[(int)Pose.StepBack] = AddLoop(_clips.StepBack, true);
             _poses[(int)Pose.StepLeft] = AddLoop(_clips.StepLeft, true);
@@ -330,6 +350,8 @@ namespace TheFighter
                 AddVariants(_clips.PunchVariants(kind), _punches[(int)kind], Layer.Upper);
             }
             AddVariants(_clips.Slip, _slip, Layer.Upper);
+            AddVariants(_clips.HitHead, _hitHead, Layer.Upper);
+            AddVariants(_clips.HitBody, _hitBody, Layer.Upper);
             AddVariants(_clips.Down, _down, Layer.Full);
 
             if (_entries.Count == 0)
@@ -667,6 +689,26 @@ namespace TheFighter
             _punchWasActive = false;
             _punchVariant = -1;
 
+            // Taking one. Scrubbed by the rig's recoil so the clip and the procedural snap are the
+            // same reaction rather than two.
+            if (Owner.Rig != null)
+            {
+                float recoil = Owner.Rig.RecoilProgress;
+                if (recoil >= 0f)
+                {
+                    List<int> pool = Owner.Rig.RecoilZone == HitZone.Head ? _hitHead : _hitBody;
+                    int hit = Pick(pool, ref _hitVariant, recoil > 0.03f);
+                    if (hit >= 0)
+                    {
+                        return Scrub(hit, recoil);
+                    }
+                }
+                else
+                {
+                    _hitVariant = -1;
+                }
+            }
+
             if (Owner.IsDodging)
             {
                 _slipClock += deltaTime;
@@ -776,7 +818,7 @@ namespace TheFighter
             if (depthClip < 0) { depthShare = 0f; }
 
             float stanceWeight = Mathf.Max(0f, 1f - lateralShare - depthShare);
-            int guard = _poses[(int)Pose.Guard];
+            int guard = GuardPoseFor();
             int idle = _poses[(int)Pose.Idle];
 
             if (guard >= 0 && idle >= 0)
@@ -795,6 +837,34 @@ namespace TheFighter
 
             Add(lateralClip, lateralShare);
             Add(depthClip, depthShare);
+        }
+
+        /// Which guard clip the situation calls for, falling back to the plain one. Reads the
+        /// incoming punch exactly as ArmPose does, so the clip and the IK ask for the same shape
+        /// rather than pulling the arms in two directions.
+        int GuardPoseFor()
+        {
+            Fighter foe = Owner.Opponent;
+            PunchDefinition incoming = foe != null ? foe.ActivePunch : null;
+            int plain = _poses[(int)Pose.Guard];
+
+            if (incoming == null)
+            {
+                return plain;
+            }
+
+            if (incoming.Kind == PunchKind.Hook && _poses[(int)Pose.GuardHook] >= 0)
+            {
+                return _poses[(int)Pose.GuardHook];
+            }
+
+            bool low = foe.AimHeight < 0.5f || incoming.Kind == PunchKind.Uppercut;
+            if (low && _poses[(int)Pose.GuardBody] >= 0)
+            {
+                return _poses[(int)Pose.GuardBody];
+            }
+
+            return plain;
         }
 
         /// The opposite-direction clip is a deliberate last resort: wrong-footed footwork still
