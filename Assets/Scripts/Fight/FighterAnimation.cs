@@ -27,6 +27,17 @@ namespace TheFighter
         /// the fighter is actually travelling. 0 reads as 1.
         public float Speed = 1f;
 
+        [Header("When this one is chosen")]
+        /// Leave both at Any and this clip serves every situation - which is what you want with
+        /// one clip in the slot. Tag them and it is preferred when they match.
+        ///
+        /// This is how the big fight games do reactions: gameplay produces a hit descriptor and
+        /// the animation system queries for the closest clip, rather than there being one slot per
+        /// situation. Splitting slots instead would mean zone x direction x force = two dozen
+        /// Inspector fields, and adding a new axis would mean doubling them again.
+        public HitDirection Direction = HitDirection.Any;
+        public HitSeverity Force = HitSeverity.Any;
+
         /// Routes this clip to the full-body layer instead of the masked upper-body one.
         ///
         /// **Costs the crouch.** A full-body punch overrides the legs, so it cannot be thrown from
@@ -206,7 +217,6 @@ namespace TheFighter
         {
             Idle,
             Guard,
-            GuardHook,
             GuardBody,
             StepForward,
             StepBack,
@@ -229,6 +239,8 @@ namespace TheFighter
         {
             public AnimationClip Clip;
             public Layer Layer;
+            public HitDirection Direction;
+            public HitSeverity Force;
             public float Start;
             public float End;
             public float Speed;
@@ -249,6 +261,7 @@ namespace TheFighter
         readonly List<Entry> _entries = new List<Entry>();
         readonly int[] _poses = new int[(int)Pose.Count];
         readonly List<int>[] _punches = new List<int>[4];
+        readonly List<int> _guardHook = new List<int>();
         readonly List<int> _slip = new List<int>();
         readonly List<int> _hitHead = new List<int>();
         readonly List<int> _hitBody = new List<int>();
@@ -269,6 +282,7 @@ namespace TheFighter
         float _slipClock;
         float _downClock;
         float _guardBlend;
+        HitDirection _lastGuardSide = HitDirection.Any;
         float _upperWeight;
         float _fullWeight;
 
@@ -276,6 +290,7 @@ namespace TheFighter
         bool _punchWasActive;
         float _lastProgress;
         int _punchVariant = -1;
+        int _guardHookVariant = -1;
         int _slipVariant = -1;
         int _hitVariant = -1;
         int _downVariant = -1;
@@ -335,7 +350,13 @@ namespace TheFighter
             // is free characterisation.
             _poses[(int)Pose.Idle] = AddLoop(_clips.Idle, false);
             _poses[(int)Pose.Guard] = AddLoop(_clips.Guard, false);
-            _poses[(int)Pose.GuardHook] = AddLoop(_clips.GuardHook, false);
+            // Every variant kept, not one rolled: which ear is covered has to follow the punch,
+            // so this one is chosen per frame rather than per fight.
+            AddVariants(_clips.GuardHook, _guardHook, Layer.Base);
+            for (int i = 0; i < _guardHook.Count; i++)
+            {
+                _entries[_guardHook[i]].Looping = true;
+            }
             _poses[(int)Pose.GuardBody] = AddLoop(_clips.GuardBody, false);
             _poses[(int)Pose.StepForward] = AddLoop(_clips.StepForward, true);
             _poses[(int)Pose.StepBack] = AddLoop(_clips.StepBack, true);
@@ -576,6 +597,8 @@ namespace TheFighter
             entry.Start = a;
             entry.End = b;
             entry.Speed = variant.Speed <= 0.0001f ? 1f : variant.Speed;
+            entry.Direction = variant.Direction;
+            entry.Force = variant.Force;
 
             _entries.Add(entry);
             return _entries.Count - 1;
@@ -697,7 +720,8 @@ namespace TheFighter
                 if (recoil >= 0f)
                 {
                     List<int> pool = Owner.Rig.RecoilZone == HitZone.Head ? _hitHead : _hitBody;
-                    int hit = Pick(pool, ref _hitVariant, recoil > 0.03f);
+                    int hit = Pick(pool, ref _hitVariant, recoil > 0.03f,
+                        Owner.LastHitDirection, Owner.LastHitSeverity);
                     if (hit >= 0)
                     {
                         return Scrub(hit, recoil);
@@ -712,7 +736,10 @@ namespace TheFighter
             if (Owner.IsDodging)
             {
                 _slipClock += deltaTime;
-                int entry = Pick(_slip, ref _slipVariant, _slipClock > deltaTime);
+                HitDirection way = Owner.LeanAmount < -0.1f ? HitDirection.Left
+                    : Owner.LeanAmount > 0.1f ? HitDirection.Right : HitDirection.Any;
+                int entry = Pick(_slip, ref _slipVariant, _slipClock > deltaTime,
+                    way, HitSeverity.Any);
                 return Scrub(entry, _slipClock / CombatTuning.DodgeDuration);
             }
 
@@ -732,12 +759,27 @@ namespace TheFighter
             }
 
             _downClock += deltaTime;
-            int entry = Pick(_down, ref _downVariant, _downClock > deltaTime);
+            int entry = Pick(_down, ref _downVariant, _downClock > deltaTime,
+                Owner.LastHitDirection, HitSeverity.Any);
             return Scrub(entry, entry >= 0 ? _downClock / _entries[entry].Length : 0f);
         }
 
         /// Holds onto the variant already in play, or rolls a new one.
         int Pick(List<int> options, ref int held, bool keep)
+        {
+            return Pick(options, ref held, keep, HitDirection.Any, HitSeverity.Any);
+        }
+
+        /// Picks the clip that best fits the situation, rather than any clip in the slot.
+        ///
+        /// Scoring rather than filtering, so the slot degrades instead of going empty: a clip
+        /// tagged for exactly this direction and force beats one tagged for the direction alone,
+        /// which beats an untagged one - but an untagged one is still used when nothing specific
+        /// exists. A clip tagged for a *different* direction is never used for this one, since a
+        /// fighter snapping right from a punch that came from the right is worse than no reaction.
+        /// Ties are broken at random, which is where variety comes from.
+        int Pick(List<int> options, ref int held, bool keep,
+            HitDirection direction, HitSeverity force)
         {
             if (options.Count == 0)
             {
@@ -750,8 +792,70 @@ namespace TheFighter
                 return held;
             }
 
-            held = options[Random.Range(0, options.Count)];
-            return held;
+            int best = -1;
+            int bestScore = -1;
+            int tied = 0;
+
+            for (int i = 0; i < options.Count; i++)
+            {
+                Entry entry = _entries[options[i]];
+                int score = Score(entry, direction, force);
+                if (score < 0)
+                {
+                    continue;
+                }
+
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    best = options[i];
+                    tied = 1;
+                }
+                else if (score == bestScore)
+                {
+                    // Reservoir sampling, so an even spread over however many tie without
+                    // collecting them into a list every time a punch lands.
+                    tied++;
+                    if (Random.Range(0, tied) == 0)
+                    {
+                        best = options[i];
+                    }
+                }
+            }
+
+            // Nothing matched even as a wildcard - better something than a T-pose.
+            if (best < 0)
+            {
+                best = options[Random.Range(0, options.Count)];
+            }
+
+            held = best;
+            return best;
+        }
+
+        static int Score(Entry entry, HitDirection direction, HitSeverity force)
+        {
+            int score = 0;
+
+            if (entry.Direction != HitDirection.Any)
+            {
+                if (direction != HitDirection.Any && entry.Direction != direction)
+                {
+                    return -1;
+                }
+                score += entry.Direction == direction ? 2 : 0;
+            }
+
+            if (entry.Force != HitSeverity.Any)
+            {
+                if (force != HitSeverity.Any && entry.Force != force)
+                {
+                    return -1;
+                }
+                score += entry.Force == force ? 2 : 0;
+            }
+
+            return score;
         }
 
         /// Maps a 0-1 action progress onto the entry's window of its clip. Holding the last frame
@@ -853,9 +957,17 @@ namespace TheFighter
                 return plain;
             }
 
-            if (incoming.Kind == PunchKind.Hook && _poses[(int)Pose.GuardHook] >= 0)
+            if (incoming.Kind == PunchKind.Hook && _guardHook.Count > 0)
             {
-                return _poses[(int)Pose.GuardHook];
+                // Cover the ear it is coming at. A left hook from him arrives on my right, which
+                // is the same mirror ArmPose uses, so clip and IK ask for one shape.
+                bool fromMyLeft = foe.Rig != null && !foe.Rig.IsLeftHand(foe.ActiveHand);
+                HitDirection side = fromMyLeft ? HitDirection.Left : HitDirection.Right;
+
+                // Held while this punch is in the air, so the cover does not re-roll mid-hook.
+                bool keep = _guardHookVariant >= 0 && _lastGuardSide == side;
+                _lastGuardSide = side;
+                return Pick(_guardHook, ref _guardHookVariant, keep, side, HitSeverity.Any);
             }
 
             bool low = foe.AimHeight < 0.5f || incoming.Kind == PunchKind.Uppercut;

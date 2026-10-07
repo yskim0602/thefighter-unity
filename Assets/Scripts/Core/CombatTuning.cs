@@ -106,6 +106,17 @@ namespace TheFighter
         /// Windup, strike and recovery all stretch - the punches are late, not weaker.
         public const float HurtTimingMultiplier = 1.35f;
 
+        // --- Hit descriptor ------------------------------------------------
+        // What gameplay tells the animation system about a punch that landed, so it can pick a
+        // reaction that matches instead of playing the one clip it has.
+        /// How far off the centre line a contact has to be to count as a side shot rather than a
+        /// straight one. A fraction of the forward distance, so it scales with how square the
+        /// fighters are to each other.
+        public const float SideHitRatio = 0.6f;
+        /// Damage above this reads as a heavy shot. Near a clean straight from a mid-career
+        /// fighter, so most jabs are light and most power punches are not.
+        public const float HeavyHitDamage = 14f;
+
         // --- Hit reactions -------------------------------------------------
         public const float HeadStaggerChance = 0.4f;
         public const float StaggerTime = 0.35f;

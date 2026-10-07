@@ -185,6 +185,8 @@ namespace TheFighter
             BodyDamageTaken = 0f;
             HeadDamageBlocked = 0f;
             BodyDamageBlocked = 0f;
+            LastHitDirection = HitDirection.Any;
+            LastHitSeverity = HitSeverity.Any;
             Knockdowns = 0;
             TotalKnockdowns = 0;
             State = ActionState.Free;
@@ -302,6 +304,12 @@ namespace TheFighter
         public float BodyDamageTaken { get; private set; }
         public float HeadDamageBlocked { get; private set; }
         public float BodyDamageBlocked { get; private set; }
+
+        /// The last punch that landed, described so the animation layer can pick a reaction that
+        /// matches it. Worked out from the contact point in this fighter's own frame, not from
+        /// which hand threw it - a left hook from the man in front of you lands on your right.
+        public HitDirection LastHitDirection { get; private set; }
+        public HitSeverity LastHitSeverity { get; private set; }
 
         /// 0 while there is still something left, 1 when a fighter is out on his feet. Scales the
         /// guard, the footwork and the timing - every one of them for the worse.
@@ -975,6 +983,22 @@ namespace TheFighter
             }
         }
 
+        /// Which way the punch came in, from where it touched. Lateral beats forward when the
+        /// contact is well off the centre line, which is what separates a hook from a straight
+        /// without having to ask what kind of punch it was - a wide straight should still rock you
+        /// sideways, and a hook taken square should not.
+        HitDirection Classify(Vector3 point)
+        {
+            Vector3 local = transform.InverseTransformPoint(point);
+
+            if (Mathf.Abs(local.x) > Mathf.Abs(local.z) * CombatTuning.SideHitRatio)
+            {
+                return local.x >= 0f ? HitDirection.Right : HitDirection.Left;
+            }
+
+            return local.z >= 0f ? HitDirection.Front : HitDirection.Back;
+        }
+
         public HitEvent ReceivePunch(Fighter attacker, PunchDefinition punch, HitZone zone,
             float rawDamage, Vector3 point, bool counter)
         {
@@ -1083,6 +1107,10 @@ namespace TheFighter
                 push.Normalize();
                 Motor.AddImpulse(push * (damage * CombatTuning.KnockbackPerDamage));
             }
+
+            LastHitDirection = Classify(point);
+            LastHitSeverity = damage >= CombatTuning.HeavyHitDamage
+                ? HitSeverity.Heavy : HitSeverity.Light;
 
             // A blocked punch still moves you, just far less than one that got through.
             if (Rig != null && evt.Result != HitResult.Dodged)

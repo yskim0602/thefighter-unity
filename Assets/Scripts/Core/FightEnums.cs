@@ -20,6 +20,28 @@ namespace TheFighter
         Uppercut
     }
 
+    /// Which way a punch arrived, in the *defender's* frame. A left hook from the man in front
+    /// of you lands on your right, so this is worked out from the contact point rather than from
+    /// which hand threw it.
+    public enum HitDirection
+    {
+        /// Matches anything. A clip tagged Any is the fallback for every direction.
+        Any,
+        Front,
+        Left,
+        Right,
+        Back
+    }
+
+    /// How hard it landed. Two steps, because three would need three times the clips to tell
+    /// apart and nobody can see the difference between a 6 and a 7.
+    public enum HitSeverity
+    {
+        Any,
+        Light,
+        Heavy
+    }
+
     public enum HitZone
     {
         Head,

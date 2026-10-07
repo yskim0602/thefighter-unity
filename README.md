@@ -667,18 +667,95 @@ SolveSide(false, !leftThrowing, ...);   // 펀치가 없으면 !false = true
 그래도 `MISSING THE TARGET` 이 나오면 수치를 알려주세요 — IK가 아예 안 돌고 있는 건지
 조준점이 틀린 건지 구분됩니다.
 
+### 클립 선택 — 슬롯을 쪼개지 않고 조건을 태깅합니다
+
+**이게 UFC·EA 격투 게임이 실제로 하는 방식입니다.** 게임플레이가 *히트 정보*를 만들고,
+애니메이션 시스템이 그에 **가장 맞는 클립을 질의**합니다. 상태마다 슬롯이 하나 있는
+구조가 아닙니다.
+
+슬롯을 방향별로 쪼개면 **부위 3 × 방향 4 × 강도 2 = 24칸**이 되고, 축을 하나 더
+추가하면 다시 두 배가 됩니다. 그래서 `ClipVariant` 에 조건을 붙였습니다:
+
+```
+Hit Head
+  [0] Clip: Standing React Large From Left    Direction: Left    Force: Heavy
+  [1] Clip: Standing React Large From Right   Direction: Right   Force: Heavy
+  [2] Clip: Standing React Small From Front   Direction: Front   Force: Light
+  [3] Clip: Taking Punch                      Direction: Any     Force: Any
+```
+
+**점수로 고릅니다, 걸러내지 않습니다** — 그래서 슬롯이 비지 않고 *degrade* 합니다:
+
+| | |
+| --- | --- |
+| 방향·강도 둘 다 맞음 | 4점 — 최우선 |
+| 방향만 맞음 | 2점 |
+| `Any` (와일드카드) | 0점 — 맞는 게 없을 때 쓰입니다 |
+| **다른 방향으로 태깅됨** | **실격** — 오른쪽에서 온 펀치에 오른쪽으로 꺾이는 건 반응이 없는 것보다 나쁩니다 |
+
+동점이면 무작위 — 다양성은 거기서 나옵니다. **클립 하나만 넣으면 `Any` 로 모든 상황에
+쓰입니다.** 지금처럼요.
+
+#### 방향은 접촉점에서 계산합니다 (던진 손이 아니라)
+
+상대의 **왼쪽 훅은 내 오른쪽에** 맞습니다. 그래서 펀치 종류를 묻지 않고 접촉점을
+내 기준 좌표로 변환해서 판정합니다:
+
+| 접촉 | 판정 |
+| --- | --- |
+| 스트레이트 (정면) | `Front` |
+| 왼손 훅 → 내 오른쪽 | `Right` |
+| 오른손 훅 → 내 왼쪽 | `Left` |
+| **넓게 들어온 스트레이트** | `Right` — **의도된 결과입니다.** 넓은 스트레이트는 옆으로 밀려야 하고, 정면으로 받은 훅은 안 밀려야 합니다 |
+
+강도는 데미지 14 이상이면 `Heavy`. 잽은 대부분 Light, 파워펀치는 대부분 Heavy로 갈립니다.
+
+#### 조건이 걸린 슬롯
+
+| 슬롯 | 쓰는 조건 |
+| --- | --- |
+| `Hit Head` / `Hit Body` | 방향 + 강도 |
+| `Slip` | 방향 (Q/E 린 방향) |
+| `Guard Hook` | 방향 (훅이 오는 쪽 귀) — **매 프레임 선택**, 훅 중간에 안 바뀝니다 |
+| `Down` | 방향 (쓰러뜨린 펀치) |
+| 펀치 4종 | 무작위 (변형) |
+
 ### 지금 필요한 Mixamo 클립 — 슬롯은 만들어뒀습니다
 
 찾아서 넣어주시면 상황에 맞게 나갑니다. 비워두면 지금처럼 IK/절차적 반응이 대신합니다.
 
-| 슬롯 | Mixamo 검색어 | 왜 필요한가 |
+Mixamo에 **`Standing React` 계열**이 있습니다 — 방향별로 나뉘어 있어서 지금 만든
+조건 선택에 그대로 들어맞습니다. **여기가 가장 먼저 받을 것입니다:**
+
+| 받을 것 | 슬롯 | 태깅 |
 | --- | --- | --- |
-| **`Guard Hook`** | `covering up`, `boxing block`, `cover head` | 훅 방어. 지금 가장 큰 공백입니다 |
-| **`Guard Body`** | `body block`, `defensive stance` | 바디 방어 |
-| **`Hit Head`** | `taking punch`, `head hit`, `hit reaction` | 피격이 피격으로 보이게 |
-| **`Hit Body`** | `body hit`, `stomach hit` | 바디 피격 |
-| `Uppercut` | `uppercut` | 아직 비어 있습니다 |
-| `Down` / `Get Up` | `knocked out`, `getting up` | 다운 |
+| `Standing React Large From Left` | `Hit Head` | Direction **Left**, Force **Heavy** |
+| `Standing React Large From Right` | `Hit Head` | Direction **Right**, Force **Heavy** |
+| `Standing React Large From Front` | `Hit Head` | Direction **Front**, Force **Heavy** |
+| `Standing React Small From Left` | `Hit Head` | Direction **Left**, Force **Light** |
+| `Standing React Small From Right` | `Hit Head` | Direction **Right**, Force **Light** |
+| `Standing React Small From Front` | `Hit Head` | Direction **Front**, Force **Light** |
+
+Small/Large 둘 다 받으시면 **잽에는 살짝 흔들리고 파워펀치엔 크게 꺾입니다.** 타격감
+차이가 가장 크게 나는 부분입니다.
+
+**나머지 (검색어 기준 — Mixamo 이름은 바뀔 수 있습니다):**
+
+| 검색어 | 슬롯 | 태깅 | 왜 |
+| --- | --- | --- | --- |
+| `taking punch` | `Hit Head` | Any / Any | 와일드카드 폴백 |
+| `hit to body`, `stomach` | `Hit Body` | Any | 바디 피격 |
+| `covering up`, `block` | `Guard Hook` | **Left / Right 각각** | 훅 방어 — **지금 가장 큰 공백** |
+| `defensive stance`, `block idle` | `Guard Body` | Any | 바디 방어 |
+| `uppercut` | `Uppercut` | Any | 아직 비어 있습니다 |
+| `dodging left`, `dodging right` | `Slip` | **Left / Right** | 좌우 회피 |
+| `knocked out`, `falling back` | `Down` | 방향별로 있으면 태깅 | 다운 |
+| `getting up`, `stand up` | (아직 슬롯 없음) | | 기상 — 필요하면 추가합니다 |
+| `boxing step forward/backward` | `Step Forward` / `Back` | Any | 전후진 |
+| `long right side step` | `Step Right` | Any | 우측 (좌측은 이미 있음) |
+
+`Guard Hook` 에 **왼/오른쪽을 따로** 넣으시면, 상대가 왼손 훅을 던질 때 내 **오른쪽
+귀**를 덮는 클립이 자동으로 나갑니다. 하나만 넣고 `Any` 로 두면 양쪽 다 그걸 씁니다.
 
 `Hit Head` / `Hit Body` 는 **FighterRig의 리코일 시계로 스크럽**됩니다 — 클립과 절차적
 머리 꺾임이 **하나의 반응**이 되고, 각자 따로 돌지 않습니다.
