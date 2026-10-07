@@ -61,6 +61,10 @@ namespace TheFighter
         /// Damage that produces a full-strength recoil.
         public float RecoilDamageReference = 18f;
         public float RecoilSeconds = 0.20f;
+        /// Scales the procedural hit reaction. FighterAnimation drops it once there are hit clips,
+        /// so the clip carries the reaction and this stays as a sharp first frame on top instead
+        /// of being a second reaction on a different clock.
+        [Range(0f, 1f)] public float RecoilWeight = 1f;
         public float StaggerLean = 9f;
 
         [Header("Footwork - placeholder shuffle, not a stride")]
@@ -529,8 +533,8 @@ namespace TheFighter
                 angles.x += Owner.CrouchAmount * CrouchPitch;
             }
 
-            position += _recoilPush * recoil;
-            angles += _recoilAngles * recoil;
+            position += _recoilPush * (recoil * RecoilWeight);
+            angles += _recoilAngles * (recoil * RecoilWeight);
 
             position = Vector3.Lerp(position, DownPosition, _downBlend);
             angles = Vector3.Lerp(angles, DownRotation, _downBlend);

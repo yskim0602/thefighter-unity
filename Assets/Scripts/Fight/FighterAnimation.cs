@@ -179,6 +179,21 @@ namespace TheFighter
         public float StrideRateIdle = 0.55f;
         public float StrideRateFull = 1.35f;
 
+        [Header("Hit reactions")]
+        /// How long a hit clip is given, before severity scales it.
+        ///
+        /// Not the rig's recoil: that is 0.18-0.26s, tuned for a procedural head snap, and a
+        /// Mixamo react clip is well over a second. Playing one on that clock runs it at six times
+        /// speed, which reads as a twitch rather than as being hit. So the clip gets a clock of
+        /// its own and the two run side by side at their own rates.
+        public float HitReactionSeconds = 0.45f;
+        /// A heavy shot gets longer, which is where most of the difference between eating a jab
+        /// and eating a right hand comes from.
+        public float HeavyHitScale = 1.35f;
+        /// How much of the procedural recoil survives once hit clips are doing the work. Low, but
+        /// not zero: the clip carries the reaction and this keeps the first frame sharp.
+        [Range(0f, 1f)] public float ProceduralRecoilWithClips = 0.4f;
+
         [Header("Diagnostics")]
         /// Logs, once per fighter, how much clip each punch is being asked to show in the time it
         /// actually has. A three-second Mixamo take played across a 0.38s jab runs at 8x, and no
@@ -291,6 +306,10 @@ namespace TheFighter
         float _lastProgress;
         int _punchVariant = -1;
         int _guardHookVariant = -1;
+        bool _hitActive;
+        float _hitClock;
+        float _lastRecoil = -1f;
+        HitZone _hitZone;
         int _slipVariant = -1;
         int _hitVariant = -1;
         int _downVariant = -1;
@@ -426,6 +445,13 @@ namespace TheFighter
             _graph.Play();
             _built = true;
 
+            // One reaction, not two. With clips in the slots the procedural snap becomes a sharp
+            // first frame on top rather than a second, differently-timed reaction underneath.
+            if (Owner.Rig != null && (_hitHead.Count > 0 || _hitBody.Count > 0))
+            {
+                Owner.Rig.RecoilWeight = Mathf.Clamp01(ProceduralRecoilWithClips);
+            }
+
             if (LogClipFit)
             {
                 ReportClipFit();
@@ -479,6 +505,12 @@ namespace TheFighter
                     }
                 }
             }
+
+            anyTight |= ReportAction(report, "HIT HEAD", _hitHead,
+                HitReactionSeconds * HeavyHitScale);
+            anyTight |= ReportAction(report, "HIT BODY", _hitBody,
+                HitReactionSeconds * HeavyHitScale);
+            anyTight |= ReportAction(report, "SLIP", _slip, CombatTuning.DodgeDuration);
 
             if (anyTight)
             {
@@ -597,11 +629,39 @@ namespace TheFighter
             entry.Start = a;
             entry.End = b;
             entry.Speed = variant.Speed <= 0.0001f ? 1f : variant.Speed;
-            entry.Direction = variant.Direction;
-            entry.Force = variant.Force;
+            // Tagged by hand if you tagged it; read off the file name if you did not. Mixamo
+            // already says it - "Standing React Large From Left" is a direction and a severity in
+            // the name - and asking somebody to retype that into two dropdowns per clip, for
+            // dozens of clips, is how a system this size stops being used. An explicit tag always
+            // wins, so this only ever fills in blanks.
+            entry.Direction = variant.Direction != HitDirection.Any
+                ? variant.Direction : DirectionFromName(entry.Clip.name);
+            entry.Force = variant.Force != HitSeverity.Any
+                ? variant.Force : ForceFromName(entry.Clip.name);
 
             _entries.Add(entry);
             return _entries.Count - 1;
+        }
+
+        static HitDirection DirectionFromName(string name)
+        {
+            string lower = name.ToLowerInvariant();
+            // Checked before "back", since "backward" contains it and a few Mixamo names use both.
+            if (lower.Contains("left")) { return HitDirection.Left; }
+            if (lower.Contains("right")) { return HitDirection.Right; }
+            if (lower.Contains("front") || lower.Contains("forward")) { return HitDirection.Front; }
+            if (lower.Contains("back") || lower.Contains("behind")) { return HitDirection.Back; }
+            return HitDirection.Any;
+        }
+
+        static HitSeverity ForceFromName(string name)
+        {
+            string lower = name.ToLowerInvariant();
+            // Mixamo's own words are Large and Small; ours are Heavy and Light. Both are read, so
+            // renaming a file to say which is enough and renaming it back does no harm.
+            if (lower.Contains("heavy") || lower.Contains("large")) { return HitSeverity.Heavy; }
+            if (lower.Contains("light") || lower.Contains("small")) { return HitSeverity.Light; }
+            return HitSeverity.Any;
         }
 
         // ------------------------------------------------------------------
@@ -712,24 +772,48 @@ namespace TheFighter
             _punchWasActive = false;
             _punchVariant = -1;
 
-            // Taking one. Scrubbed by the rig's recoil so the clip and the procedural snap are the
-            // same reaction rather than two.
+            // Taking one. The rig's recoil only says *that* a hit landed and which zone; the
+            // clip then runs on its own clock, because the two want very different durations.
             if (Owner.Rig != null)
             {
                 float recoil = Owner.Rig.RecoilProgress;
-                if (recoil >= 0f)
+
+                // A new hit is the recoil appearing, or restarting while one is already running.
+                bool fresh = recoil >= 0f && (_lastRecoil < 0f || recoil < _lastRecoil);
+                _lastRecoil = recoil;
+
+                if (fresh)
                 {
-                    List<int> pool = Owner.Rig.RecoilZone == HitZone.Head ? _hitHead : _hitBody;
-                    int hit = Pick(pool, ref _hitVariant, recoil > 0.03f,
-                        Owner.LastHitDirection, Owner.LastHitSeverity);
-                    if (hit >= 0)
-                    {
-                        return Scrub(hit, recoil);
-                    }
-                }
-                else
-                {
+                    _hitActive = true;
+                    _hitClock = 0f;
                     _hitVariant = -1;
+                    _hitZone = Owner.Rig.RecoilZone;
+                }
+
+                if (_hitActive)
+                {
+                    _hitClock += deltaTime;
+                    float duration = HitReactionSeconds
+                        * (Owner.LastHitSeverity == HitSeverity.Heavy ? HeavyHitScale : 1f);
+
+                    if (_hitClock >= duration)
+                    {
+                        _hitActive = false;
+                        _hitVariant = -1;
+                    }
+                    else
+                    {
+                        List<int> pool = _hitZone == HitZone.Head ? _hitHead : _hitBody;
+                        int hit = Pick(pool, ref _hitVariant, _hitClock > deltaTime,
+                            Owner.LastHitDirection, Owner.LastHitSeverity);
+                        if (hit >= 0)
+                        {
+                            return Scrub(hit, _hitClock / duration);
+                        }
+
+                        // No clip for this zone - let the procedural reaction have it alone.
+                        _hitActive = false;
+                    }
                 }
             }
 
@@ -1029,6 +1113,46 @@ namespace TheFighter
             _layers.SetInputWeight((int)Layer.Base, 1f);
             _layers.SetInputWeight((int)Layer.Upper, _upperWeight);
             _layers.SetInputWeight((int)Layer.Full, _fullWeight);
+        }
+
+        /// Same fit check for the reaction slots, which have their own durations - and which is
+        /// where the problem usually is, since a react clip is seconds long and a reaction is not.
+        bool ReportAction(System.Text.StringBuilder report, string name, List<int> pool, float have)
+        {
+            bool tight = false;
+
+            if (pool.Count == 0)
+            {
+                report.Append("\n  ").Append(name).Append("  (no clip)");
+                return false;
+            }
+
+            for (int i = 0; i < pool.Count; i++)
+            {
+                Entry entry = _entries[pool[i]];
+                float shown = (entry.End - entry.Start) * entry.Length;
+                float rate = shown / Mathf.Max(0.01f, have);
+
+                report.Append("\n  ").Append(name)
+                    .Append("  ").Append(entry.Clip.name)
+                    .Append("  [").Append(entry.Direction).Append('/').Append(entry.Force)
+                    .Append(']')
+                    .Append("  window ").Append(entry.Start.ToString("0.00"))
+                    .Append('-').Append(entry.End.ToString("0.00"))
+                    .Append(" = ").Append(shown.ToString("0.00")).Append('s')
+                    .Append("  in ").Append(have.ToString("0.00")).Append('s')
+                    .Append("  -> ").Append(rate.ToString("0.0")).Append('x');
+
+                if (rate > 2.5f)
+                {
+                    tight = true;
+                    float span = Mathf.Clamp01(have / entry.Length);
+                    report.Append("  TOO LONG, try ").Append(entry.Start.ToString("0.00"))
+                        .Append('-').Append(Mathf.Min(1f, entry.Start + span).ToString("0.00"));
+                }
+            }
+
+            return tight;
         }
 
         /// Pulls the hips back to the height the stance sits at, in proportion to how much of the
