@@ -17,7 +17,8 @@ namespace TheFighter
     {
         public Fighter Target;
         public KeyCode Toggle = KeyCode.P;
-        public KeyCode Reset = KeyCode.O;
+        /// Not O: that is the uppercut.
+        public KeyCode Reset = KeyCode.F1;
         public bool Visible;
 
         [Header("Thresholds (metres / degrees)")]
@@ -293,7 +294,7 @@ namespace TheFighter
             float line = 16f * _scale;
 
             Write(x, ref y, line, "POSTURE PROBE   " + Target.FighterName
-                + "   P hide / O reset", Color.white);
+                + "   P hide / F1 reset", Color.white);
 
             if (!_learned)
             {

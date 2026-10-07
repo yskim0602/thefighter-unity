@@ -347,7 +347,13 @@ FirstPersonGloveScale 0.62
 
 ### `PostureProbe` — 10개 테스트를 수치로
 
-`P` 로 켜고, `O` 로 최악값 리셋. 보고하는 것:
+**Play 중에 `P`** 를 누르면 Game 뷰 **오른쪽 아래**에 패널이 뜹니다. `F1` 로 최악값
+리셋 (O는 어퍼컷이라 안 씁니다). 처음 켜면 "learning the stance" 가 잠깐 뜨는데,
+**가만히 똑바로 서 있으면** 기준선을 잡고 수치가 나옵니다.
+
+인스펙터에서 `BoxingBootstrap` → **Posture Probe On** 을 켜면 처음부터 보입니다.
+
+보고하는 것:
 
 | 표시 | 측정하는 실패 |
 | --- | --- |

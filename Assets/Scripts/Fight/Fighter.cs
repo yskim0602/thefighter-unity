@@ -489,13 +489,30 @@ namespace TheFighter
         /// and it costs footwork, which is the trade that makes it a decision.
         void HandleHeadMovement(FighterIntent intent, float dt)
         {
-            bool allowed = (State == ActionState.Free || State == ActionState.Recovery) && !IsDodging;
+            // Posture is a stance, not an action, so it has to survive a punch. This gate used to
+            // require Free or Recovery, which meant every punch spent its windup and strike
+            // driving the crouch toward zero - 0.20s at 7 per second is the entire crouch, so the
+            // fighter stood up to throw and sat back down afterwards. That is the exact thing
+            // CLAUDE.md forbids, and it was here rather than in any clip.
+            bool floored = State == ActionState.Down || State == ActionState.KnockedOut;
+            bool allowed = !floored && State != ActionState.Staggered && !IsDodging;
 
             float wantedLean = allowed ? Mathf.Clamp(intent.Lean, -1f, 1f) : 0f;
             float wantedCrouch = allowed && intent.Crouch ? 1f : 0f;
 
-            LeanAmount = Mathf.MoveTowards(LeanAmount, wantedLean, CombatTuning.HeadMoveSpeed * dt);
-            CrouchAmount = Mathf.MoveTowards(CrouchAmount, wantedCrouch, CombatTuning.HeadMoveSpeed * dt);
+            // Holding a stance through a punch costs nothing, since the target is already where
+            // you are. Changing one mid-punch is slow, because your weight is committed - so
+            // letting go of the key rises out of the crouch rather than snapping upright.
+            float rate = CombatTuning.HeadMoveSpeed
+                * (ActivePunch != null ? CombatTuning.HeadMoveDuringPunch : 1f);
+
+            LeanAmount = Mathf.MoveTowards(LeanAmount, wantedLean, rate * dt);
+            CrouchAmount = Mathf.MoveTowards(CrouchAmount, wantedCrouch, rate * dt);
+
+            // Bent at the waist, the punch goes downstairs. Decided here rather than by the
+            // player aiming separately, and before HandlePunchInput runs, so the shot that leaves
+            // is already a body shot.
+            AimHeight = Mathf.Clamp01(AimHeight - CrouchAmount * CombatTuning.CrouchAimDrop);
 
             float effort = Mathf.Abs(LeanAmount) + CrouchAmount;
             if (effort > 0.05f)

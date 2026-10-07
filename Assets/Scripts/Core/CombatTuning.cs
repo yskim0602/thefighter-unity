@@ -156,6 +156,13 @@ namespace TheFighter
         public const float LeanHeadOffset = 0.19f;
         public const float CrouchHeadOffset = 0.30f;
         public const float HeadMoveSpeed = 7f;
+        /// How fast a stance may *change* while a punch is in the air. Low, because a punch
+        /// commits your weight - but never zero, and the stance you already had is never dropped.
+        /// Zeroing it during a punch is what made the fighter stand up to throw and sit back down.
+        public const float HeadMoveDuringPunch = 0.35f;
+        /// Ducking is aiming. At a full crouch the punch goes to the body, which is what boxing
+        /// does and what the player means by bending at the waist - no separate aim input needed.
+        public const float CrouchAimDrop = 1f;
         public const float HeadMoveStaminaDrainPerSecond = 3.5f;
         public const float CrouchMoveMultiplier = 0.55f;
         public const float LeanMoveMultiplier = 0.82f;

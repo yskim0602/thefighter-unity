@@ -155,6 +155,13 @@ namespace TheFighter
         public float StrideRateIdle = 0.55f;
         public float StrideRateFull = 1.35f;
 
+        [Header("Diagnostics")]
+        /// Logs, once per fighter, how much clip each punch is being asked to show in the time it
+        /// actually has. A three-second Mixamo take played across a 0.38s jab runs at 8x, and no
+        /// amount of tuning elsewhere makes that read as a punch - it reads as a blur that happens
+        /// to contain one. This says which clips to trim and roughly where to trim them to.
+        public bool LogClipFit = true;
+
         [Header("Hip height")]
         /// Mixamo clips disagree about how high the hips sit, because each one's Root Transform
         /// Position (Y) is measured from a different reference. Blending from idle into a punch
@@ -375,6 +382,72 @@ namespace TheFighter
 
             _graph.Play();
             _built = true;
+
+            if (LogClipFit)
+            {
+                ReportClipFit();
+            }
+        }
+
+        /// A punch's window has to be shown inside the punch's own duration, and the ratio between
+        /// them is the playback rate. Past about 2.5x the motion stops being readable, so this
+        /// prints the rate and the window that would bring it back to 1x.
+        void ReportClipFit()
+        {
+            System.Text.StringBuilder report = new System.Text.StringBuilder();
+            report.Append("FighterAnimation clip fit for ").Append(Owner.FighterName).Append(':');
+            bool anyTight = false;
+
+            for (int i = 0; i < PunchLibrary.All.Length; i++)
+            {
+                PunchKind kind = PunchLibrary.All[i];
+                PunchDefinition punch = PunchLibrary.Get(kind);
+                List<int> variants = _punches[(int)kind];
+
+                if (variants.Count == 0)
+                {
+                    report.Append("\n  ").Append(punch.DisplayName).Append("  (no clip)");
+                    continue;
+                }
+
+                for (int v = 0; v < variants.Count; v++)
+                {
+                    Entry entry = _entries[variants[v]];
+                    float shown = (entry.End - entry.Start) * entry.Length;
+                    float have = Mathf.Max(0.01f, punch.TotalTime);
+                    float rate = shown / have;
+
+                    report.Append("\n  ").Append(punch.DisplayName)
+                        .Append("  ").Append(entry.Clip.name)
+                        .Append("  clip ").Append(entry.Length.ToString("0.00")).Append('s')
+                        .Append("  window ").Append(entry.Start.ToString("0.00"))
+                        .Append('-').Append(entry.End.ToString("0.00"))
+                        .Append(" = ").Append(shown.ToString("0.00")).Append('s')
+                        .Append("  in ").Append(have.ToString("0.00")).Append('s')
+                        .Append("  -> ").Append(rate.ToString("0.0")).Append('x');
+
+                    if (rate > 2.5f)
+                    {
+                        anyTight = true;
+                        // The slice that would play at 1x, kept at the window's start.
+                        float span = Mathf.Clamp01(have / entry.Length);
+                        report.Append("  TOO LONG, try ").Append(entry.Start.ToString("0.00"))
+                            .Append('-').Append(Mathf.Min(1f, entry.Start + span).ToString("0.00"));
+                    }
+                }
+            }
+
+            if (anyTight)
+            {
+                report.Append("\n  A window marked TOO LONG is being fast-forwarded. Trim it in "
+                    + "the clip's Window on BoxingBootstrap, or pick the slice of the take that is "
+                    + "actually the punch - the fight's timing does not change either way.");
+                Debug.LogWarning(report.ToString());
+            }
+            else
+            {
+                Debug.Log(report.ToString());
+            }
         }
 
         int CountOn(Layer layer)
