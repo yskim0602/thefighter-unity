@@ -302,6 +302,14 @@ namespace TheFighter
             _fovKick = Mathf.Max(_fovKick, degrees);
         }
 
+        /// Menus need the pointer back, so this both stops reading the mouse and releases the
+        /// cursor - setting MouseLook alone leaves it captured.
+        public void SetMouseLook(bool enabled)
+        {
+            MouseLook = enabled;
+            LockCursor(enabled);
+        }
+
         /// Shoves the broadcast camera in closer for a moment - knockdowns, big counters.
         public void PushIn(float metres)
         {

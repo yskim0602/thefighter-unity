@@ -27,6 +27,11 @@ namespace TheFighter
         public float RoundSeconds = RoundRules.RoundSeconds;
         public float RestSeconds = RoundRules.RestSeconds;
 
+        [Header("Who starts the fight")]
+        /// Off when a career owns the flow - the scene stands ready and the bell waits for a
+        /// signed offer. R also stops restarting, since in a career a fight happens once.
+        public bool AutoStart = true;
+
         public MatchPhase Phase { get; private set; }
         public int CurrentRound { get; private set; }
         public float PhaseRemaining { get; private set; }
@@ -55,7 +60,17 @@ namespace TheFighter
             Subscribe(Player);
             Subscribe(Enemy);
 
-            StartMatch();
+            if (AutoStart)
+            {
+                StartMatch();
+                return;
+            }
+
+            // Stand the fighters up and leave them idle until someone calls StartMatch.
+            PlaceFighters();
+            Player.FightActive = false;
+            Enemy.FightActive = false;
+            EnterPhase(MatchPhase.Finished, 0f);
         }
 
         void Subscribe(Fighter fighter)
@@ -104,7 +119,7 @@ namespace TheFighter
 
         void Update()
         {
-            if (Input.GetKeyDown(KeyCode.R))
+            if (AutoStart && Input.GetKeyDown(KeyCode.R))
             {
                 StartMatch();
                 return;

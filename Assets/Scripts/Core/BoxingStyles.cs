@@ -115,7 +115,10 @@ namespace TheFighter
         }
 
         /// The stat shape each style is "made of", compared against the player's trained spread.
-        static Vector4 IdealStatShape(BoxingStyle style)
+        /// The stat shape a style wants, as (Power, Endurance, Speed, Skill). Public because the
+        /// career generates opponents from it: build the stats from the shape and the fighter
+        /// comes out actually fighting like the style they are billed as.
+        public static Vector4 IdealStatShape(BoxingStyle style)
         {
             switch (style)
             {

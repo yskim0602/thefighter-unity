@@ -53,6 +53,17 @@ namespace TheFighter
             public int KnockdownsSuffered;
             public float Damage;
 
+            public void Add(Tally other)
+            {
+                Thrown += other.Thrown;
+                Landed += other.Landed;
+                Blocked += other.Blocked;
+                Slipped += other.Slipped;
+                KnockdownsScored += other.KnockdownsScored;
+                KnockdownsSuffered += other.KnockdownsSuffered;
+                Damage += other.Damage;
+            }
+
             public void Clear()
             {
                 Thrown = 0;
@@ -79,6 +90,12 @@ namespace TheFighter
         public readonly Tally Player = new Tally();
         public readonly Tally Enemy = new Tally();
 
+        /// Running totals for the whole fight. ScoreRound clears the per-round tallies the judges
+        /// work from, so without these the career would have nothing to report once the final
+        /// bell rang.
+        public readonly Tally PlayerTotals = new Tally();
+        public readonly Tally EnemyTotals = new Tally();
+
         Judge[] _judges;
         readonly List<int[]> _playerRounds = new List<int[]>();
         readonly List<int[]> _enemyRounds = new List<int[]>();
@@ -103,6 +120,21 @@ namespace TheFighter
             _enemyRounds.Clear();
             Player.Clear();
             Enemy.Clear();
+            PlayerTotals.Clear();
+            EnemyTotals.Clear();
+        }
+
+        /// Fight totals including the round in progress. A knockout ends a round that never got
+        /// scored, and those punches still happened.
+        public Tally PlayerSoFar() { return Combined(PlayerTotals, Player); }
+        public Tally EnemySoFar() { return Combined(EnemyTotals, Enemy); }
+
+        static Tally Combined(Tally banked, Tally live)
+        {
+            Tally total = new Tally();
+            total.Add(banked);
+            total.Add(live);
+            return total;
         }
 
         static Judge MakeJudge(string name)
@@ -164,6 +196,8 @@ namespace TheFighter
             _playerRounds.Add(playerScores);
             _enemyRounds.Add(enemyScores);
 
+            PlayerTotals.Add(Player);
+            EnemyTotals.Add(Enemy);
             Player.Clear();
             Enemy.Clear();
         }

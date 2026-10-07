@@ -72,6 +72,26 @@ namespace TheFighter
         public Color OpponentColor = new Color(0.75f, 0.24f, 0.24f);
         public Color GloveColor = new Color(0.82f, 0.16f, 0.16f);
 
+        [Header("Career")]
+        /// On, the career owns the flow: the scene is built but no bell rings until an offer is
+        /// signed. Off, play drops you straight into a sparring match, which is how every tuning
+        /// pass so far has been done and needs to keep working.
+        public bool CareerMode;
+
+        // What Awake built, for GameFlow to drive. The scene is built once and reconfigured per
+        // fight rather than torn down and rebuilt: FightDirector.StartMatch already resets both
+        // fighters in place, and a teardown path is a whole class of bug for no gain.
+        public Fighter Player { get; private set; }
+        public Fighter Enemy { get; private set; }
+        public FightDirector Director { get; private set; }
+        public FightCamera CameraRig { get; private set; }
+        public FightHud Hud { get; private set; }
+        public AIBrain EnemyBrain { get; private set; }
+
+        /// Set when the southpaw clip set is missing, so the career stops dealing that stance
+        /// instead of handing out fighters who punch with the wrong arm.
+        public bool SouthpawAvailable { get; private set; }
+
         static Shader _litShader;
 
         void Awake()
@@ -94,6 +114,7 @@ namespace TheFighter
             // only dealt once those clips exist. Capsules mirror themselves, so they always can.
             bool southpawReady = BoxerModel == null
                 || (SouthpawClips != null && BoxerClipSet.HasAny(SouthpawClips.Idle));
+            SouthpawAvailable = southpawReady;
 
             Stance playerStance = PlayerStance;
             if (playerStance == Stance.Southpaw && !southpawReady)
@@ -155,6 +176,66 @@ namespace TheFighter
             hud.CameraRig = rig;
             hud.Touch = touchBrain;
             hud.Feedback = feedback;
+
+            Player = player;
+            Enemy = enemy;
+            Director = director;
+            CameraRig = rig;
+            Hud = hud;
+            EnemyBrain = enemyBrain;
+
+            // Set before the director's own Start runs, since Awake is what added it.
+            director.AutoStart = !CareerMode;
+            if (!CareerMode)
+            {
+                return;
+            }
+
+            hud.Mode = FightHud.HudMode.Off;
+
+            // Added last so their Start runs with everything above already wired.
+            GameFlow flow = gameObject.AddComponent<GameFlow>();
+            flow.Ring = this;
+
+            CareerHud careerHud = gameObject.AddComponent<CareerHud>();
+            careerHud.Flow = flow;
+        }
+
+        /// Reconfigures the standing scene for one fight and rings the opening bell. The only
+        /// thing the career ever calls on the fight.
+        public void ApplySetup(FightSetup setup)
+        {
+            if (setup == null || Player == null || Enemy == null || Director == null)
+            {
+                return;
+            }
+
+            Stance playerStance = setup.PlayerStance;
+            Stance enemyStance = setup.OpponentStance;
+            if (!SouthpawAvailable)
+            {
+                playerStance = Stance.Orthodox;
+                enemyStance = Stance.Orthodox;
+            }
+
+            // The player never picks a style: whatever they trained decides it.
+            Player.Configure(setup.PlayerName, setup.PlayerStats,
+                BoxingStyles.Infer(setup.PlayerStats), playerStance);
+            Enemy.Configure(setup.OpponentName, setup.OpponentStats,
+                setup.OpponentStyle, enemyStance);
+
+            if (EnemyBrain != null)
+            {
+                EnemyBrain.Skill = setup.OpponentSkill;
+            }
+
+            Director.TotalRounds = Mathf.Max(1, setup.Rounds);
+            Director.StartMatch();
+
+            if (Hud != null)
+            {
+                Hud.Mode = FightHud.HudMode.Full;
+            }
         }
 
         /// The touch zones assume a landscape phone, and 60fps is the difference between a punch
