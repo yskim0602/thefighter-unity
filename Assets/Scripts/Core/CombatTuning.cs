@@ -34,6 +34,49 @@ namespace TheFighter
         public const float GuardGaugeRegenPerSecond = 14f;
         public const float GuardBreakStunTime = 1.5f;
 
+        // --- Weight ---------------------------------------------------------
+        // Where the weight is, between the back foot and the front. Boxing's power comes from
+        // moving it, not from the arm: a right hand thrown with the weight already forward has
+        // nothing left to transfer, and a punch thrown while retreating has nothing behind it at
+        // all. Nothing in the fight modelled this, which is why every punch hit the same whatever
+        // the feet were doing.
+        //
+        // -1 is fully on the back foot, +1 fully on the front.
+        /// An orthodox stance rests a little on the back foot, ready to drive off it.
+        public const float WeightNeutral = -0.12f;
+        /// How fast it settles back to neutral when nothing is asking it to move.
+        public const float WeightSettlePerSecond = 1.8f;
+        /// How far footwork carries it. Stepping in puts you on the front foot.
+        public const float WeightFromMove = 0.55f;
+        /// How hard a punch drives it forward. This is the punch.
+        public const float WeightDrivePerSecond = 4f;
+
+        /// How much of a punch's power is the weight transfer rather than the arm. The rear hand
+        /// is almost all transfer; the jab is a range-finder and barely cares.
+        public const float RearTransferShare = 0.6f;
+        public const float LeadTransferShare = 0.18f;
+
+        // --- Range quality ---------------------------------------------------
+        // Landing is not the same as landing well. A straight smothered at chest range has no
+        // room to extend, and one thrown at the very limit arrives with the arm out and the body
+        // left behind. Each punch's own reach is already in EffectiveRange, so one fraction covers
+        // every punch: at point blank a jab is smothered and an uppercut is exactly home, which
+        // falls out of the uppercut's reach being shorter.
+        /// Fraction of the punch's effective range where it lands hardest.
+        public const float IdealRangeFraction = 0.82f;
+        /// And below which it has no room to extend at all.
+        ///
+        /// Needed because fighters cannot stand closer than MinFighterSeparation, so measuring
+        /// the smothered end from zero distance meant it was never reached - every punch kept
+        /// 86% of its power at point blank and the mechanic did nothing. Measured as a fraction
+        /// of each punch's own reach instead, which is what makes a short punch win on the inside
+        /// and a long one win at range, with no special case per punch.
+        public const float SmotherRangeFraction = 0.45f;
+        /// What is left of a punch jammed up at the chest.
+        public const float SmotheredPower = 0.45f;
+        /// And of one thrown at the very edge of reach.
+        public const float ReachingPower = 0.72f;
+
         // --- Ducking as a technique ----------------------------------------
         // Slip the jab, drop, and go to the body. That sequence is the first real *technique* in
         // the game rather than a button, so the numbers have to make it worth doing: the duck

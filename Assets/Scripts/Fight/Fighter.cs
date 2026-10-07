@@ -187,6 +187,8 @@ namespace TheFighter
             BodyDamageBlocked = 0f;
             LastHitDirection = HitDirection.Any;
             LastHitSeverity = HitSeverity.Any;
+            Weight = CombatTuning.WeightNeutral;
+            PunchTransfer = 1f;
             Knockdowns = 0;
             TotalKnockdowns = 0;
             State = ActionState.Free;
@@ -311,6 +313,15 @@ namespace TheFighter
         public HitDirection LastHitDirection { get; private set; }
         public HitSeverity LastHitSeverity { get; private set; }
 
+        /// Where the weight is: -1 on the back foot, +1 on the front. Footwork moves it, a punch
+        /// drives it forward, and it settles back to the stance when nothing is asking.
+        public float Weight { get; private set; }
+
+        /// How much transfer the punch in the air had available when it started. 1 means the
+        /// weight was all the way back with everywhere to go; 0 means it was already forward and
+        /// the punch is arm only. Read by the damage, and by PostureProbe.
+        public float PunchTransfer { get; private set; }
+
         /// 0 while there is still something left, 1 when a fighter is out on his feet. Scales the
         /// guard, the footwork and the timing - every one of them for the worse.
         public float HurtFactor
@@ -405,6 +416,7 @@ namespace TheFighter
             AimHeight = Mathf.Clamp01(intent.AimHeight);
 
             HandleGuard(intent, dt);
+            HandleWeight(intent, dt);
             HandleHeadMovement(intent, dt);
             HandleDodge(intent);
             HandleMovement(intent, dt);
@@ -516,6 +528,35 @@ namespace TheFighter
         /// Slipping and ducking, which move the head hurtbox rather than granting a damage
         /// reduction - a punch aimed where your head was simply misses. Cheap in gas but not free,
         /// and it costs footwork, which is the trade that makes it a decision.
+        /// Moves the weight. Three things ask for it and they are allowed to disagree, which is
+        /// the point: stepping in while throwing a right hand is how you take the power out of
+        /// your own punch.
+        void HandleWeight(FighterIntent intent, float dt)
+        {
+            float target;
+            float rate;
+
+            if (ActivePunch != null && State != ActionState.Recovery)
+            {
+                // Driving off the back foot. This is the punch, not decoration on it.
+                target = 1f;
+                rate = CombatTuning.WeightDrivePerSecond;
+            }
+            else if (Motor != null && Mathf.Abs(Motor.LocalMove.y) > 0.05f)
+            {
+                float lean = Mathf.Clamp(Motor.LocalMove.y / Mathf.Max(0.1f, Stats.MoveSpeed), -1f, 1f);
+                target = CombatTuning.WeightNeutral + lean * CombatTuning.WeightFromMove;
+                rate = CombatTuning.WeightSettlePerSecond;
+            }
+            else
+            {
+                target = CombatTuning.WeightNeutral;
+                rate = CombatTuning.WeightSettlePerSecond;
+            }
+
+            Weight = Mathf.MoveTowards(Weight, Mathf.Clamp(target, -1f, 1f), rate * dt);
+        }
+
         void HandleHeadMovement(FighterIntent intent, float dt)
         {
             // Posture is a stance, not an action, so it has to survive a punch. This gate used to
@@ -676,6 +717,11 @@ namespace TheFighter
             ActivePunch = punch;
             ActiveHand = punch.Hand;
             IsFeinting = intent.Feint;
+
+            // How much weight there was left to move. Decided now, not when the punch lands -
+            // a fighter who has already lunged in cannot get it back by the time the fist
+            // arrives, and that is exactly the mistake the system exists to punish.
+            PunchTransfer = Mathf.Clamp01((1f - Weight) * 0.5f);
             _punchLanded = false;
             EnterPhase(ActionState.Windup, punch.WindupTime * PunchSpeedScale());
             TrackGlove();
@@ -962,6 +1008,11 @@ namespace TheFighter
                 damage *= Mathf.Lerp(1f, CombatTuning.CrouchBodyDamage, CrouchAmount);
             }
 
+            // What the feet contributed, and where it landed. Both are the difference between a
+            // punch that connects and a punch that hurts.
+            damage *= TransferPower(punch);
+            damage *= RangePower(punch, DistanceTo(target));
+
             float counterMultiplier = 1f;
             if (_counterWindowTimer > 0f)
             {
@@ -981,6 +1032,44 @@ namespace TheFighter
             {
                 Landed(evt);
             }
+        }
+
+        /// How much of this punch's power survived the state the feet were in. A rear hand is
+        /// almost all weight transfer, so throwing one with the weight already forward guts it; a
+        /// jab is a range-finder and barely notices.
+        float TransferPower(PunchDefinition punch)
+        {
+            float share = punch.Hand == HandRole.Rear
+                ? CombatTuning.RearTransferShare
+                : CombatTuning.LeadTransferShare;
+
+            return Mathf.Lerp(1f - share, 1f, PunchTransfer);
+        }
+
+        /// And how much survived the distance. Peaks a little short of full extension, falls off
+        /// hard when jammed up close and gently at the limit of reach - which is the difference
+        /// between a punch and a push, and between a punch and a reach.
+        float RangePower(PunchDefinition punch, float distance)
+        {
+            float range = EffectiveRange(punch);
+            if (range <= 0.0001f)
+            {
+                return 1f;
+            }
+
+            float ideal = range * CombatTuning.IdealRangeFraction;
+            float smothered = range * CombatTuning.SmotherRangeFraction;
+
+            if (distance <= ideal)
+            {
+                // Jammed up with no room to extend, through to full leverage at the ideal.
+                return Mathf.Lerp(CombatTuning.SmotheredPower, 1f,
+                    Mathf.Clamp01((distance - smothered) / Mathf.Max(0.0001f, ideal - smothered)));
+            }
+
+            // Past it: reaching, with the body left behind.
+            return Mathf.Lerp(1f, CombatTuning.ReachingPower,
+                Mathf.Clamp01((at - ideal) / Mathf.Max(0.0001f, range - ideal)));
         }
 
         /// Which way the punch came in, from where it touched. Lateral beats forward when the

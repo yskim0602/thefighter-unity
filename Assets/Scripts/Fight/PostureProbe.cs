@@ -309,7 +309,7 @@ namespace TheFighter
             _mono.fontSize = Mathf.RoundToInt(13 * _scale);
 
             float w = 430f * _scale;
-            float h = 320f * _scale;
+            float h = 344f * _scale;
             Rect area = new Rect(Screen.width - w - 12f * _scale,
                 Screen.height - h - 12f * _scale, w, h);
 
@@ -372,6 +372,18 @@ namespace TheFighter
                     Write(x, ref y, line, "        MOVING WITHOUT STEPPING", new Color(1f, 0.45f, 0.4f));
                 }
             }
+
+            // The weight, and what it cost the last punch. A right hand thrown off the front
+            // foot keeps 40% of its power, and this is where that becomes visible rather than
+            // being a number the player is quietly charged.
+            Write(x, ref y, line, string.Format(
+                "weight  {0,+5:0.00}  ({1})   last punch transfer {2:0.00}",
+                Target.Weight,
+                Target.Weight < -0.3f ? "back foot"
+                    : Target.Weight > 0.3f ? "front foot" : "centred",
+                Target.PunchTransfer),
+                Target.PunchTransfer < 0.25f ? new Color(1f, 0.82f, 0.4f)
+                    : new Color(0.75f, 0.8f, 0.86f));
 
             bool droveLast = _peakCommit >= CommitmentFloor;
             Write(x, ref y, line, string.Format("drive   commit {0:0.00}  lunge {1:0.000}m   {2}",

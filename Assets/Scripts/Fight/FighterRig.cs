@@ -83,6 +83,12 @@ namespace TheFighter
         public float MoveBobHeight = 0.030f;
         public float MoveBobRate = 2.8f;
         public float WeightShiftDegrees = 5f;
+        /// How far the torso tips as the weight moves between the feet. Small - the weight is
+        /// mostly felt through the punches it powers - but without any of it the fighter's stance
+        /// says nothing about whether he is loaded or spent, and a player cannot read what the
+        /// damage model is already charging him for.
+        public float WeightLeanDegrees = 4.5f;
+        public float WeightShiftForward = 0.035f;
 
         [Header("Real model (optional)")]
         /// Set when a Humanoid model is in. The rest of the rig keeps working either way:
@@ -495,6 +501,12 @@ namespace TheFighter
             float transfer = WeightTransferWeight;
             angles.z -= move.x * WeightShiftDegrees * transfer;
             angles.x += move.y * 2f * transfer;
+
+            // Where the weight actually is, shown. Reads the same number the damage does, so the
+            // posture and the power can never disagree.
+            float weight = Owner.Weight;
+            angles.x += weight * WeightLeanDegrees * transfer;
+            position.z += weight * WeightShiftForward * transfer;
 
             PunchDefinition punch = Owner.ActivePunch;
             if (punch != null)
