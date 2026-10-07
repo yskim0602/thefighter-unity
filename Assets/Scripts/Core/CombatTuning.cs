@@ -49,11 +49,50 @@ namespace TheFighter
         public const float DodgeDamageReduction = 0.75f;
         public const float DodgeStaminaCost = 12f;
 
+        // --- Where damage goes ---------------------------------------------
+        // Boxing does not work like a health bar. Blood decides nothing; a few clean shots to the
+        // chin decide everything, and a body attack buys you a man who cannot breathe in the
+        // later rounds. So a punch does three separate things depending on where it lands, and
+        // only one of them is the bar.
+        //
+        // Multiplying head damage into health instead was the obvious version and it does not
+        // work: at 2.1x a clean straight takes a quarter of the pool, so every fight ends inside
+        // the first round and the cards never matter.
+        public const float HeadHealthMultiplier = 1.25f;
+        public const float BodyHealthMultiplier = 0.8f;
+
+        // --- Head trauma ---------------------------------------------------
+        // The concussive load that actually ends fights, and the reason to put punches together.
+        // It decays, so shots have to arrive in a burst: five clean straights inside a few
+        // seconds puts a fresh fighter down, while the same five spread across a round only
+        // grinds the bar. Landing them is the skill the whole game is about.
+        public const float HeadTraumaPerDamage = 0.0135f;
+        public const float HeadTraumaDecayPerSecond = 0.12f;
+        /// A hurt fighter's chin goes first. This is what makes a man in trouble finishable.
+        public const float HeadTraumaHurtMultiplier = 1.8f;
+        /// You get up with your bell still ringing, so the second knockdown comes easier.
+        public const float HeadTraumaAfterKnockdown = 0.35f;
+
+        // --- Being hurt ----------------------------------------------------
+        // Below half the bar a fighter comes apart in the ways a tired fighter really does: the
+        // hands come down, the feet slow, the shots arrive late. None of it is a damage modifier -
+        // it is the same guard and footwork numbers, worse.
+        public const float HurtThresholdRatio = 0.5f;
+        /// Where the fade is complete. Not zero, since zero is a knockdown anyway.
+        public const float HurtFloorRatio = 0.08f;
+        /// The hands stop coming all the way up, so more gets through the guard.
+        public const float HurtGuardLeakMultiplier = 2.2f;
+        public const float HurtGuardRegenMultiplier = 0.45f;
+        public const float HurtMoveMultiplier = 0.72f;
+        /// Windup, strike and recovery all stretch - the punches are late, not weaker.
+        public const float HurtTimingMultiplier = 1.35f;
+
         // --- Hit reactions -------------------------------------------------
         public const float HeadStaggerChance = 0.4f;
         public const float StaggerTime = 0.35f;
-        /// A body shot drains gas instead of reliably opening a stagger.
-        public const float BodyStaminaDamageMultiplier = 0.9f;
+        /// A body shot buys the gas tank rather than the bar. Raised when damage was split by
+        /// zone: the body attack has to be worth throwing, and this is what pays for it.
+        public const float BodyStaminaDamageMultiplier = 1.5f;
         /// Metres per second of shove added per point of damage that gets through.
         public const float KnockbackPerDamage = 0.085f;
 

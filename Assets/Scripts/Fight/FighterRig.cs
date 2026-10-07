@@ -100,6 +100,10 @@ namespace TheFighter
         public float LeanSideShift = 0.06f;
         public float CrouchDip = 0.22f;
         public float CrouchPitch = 7f;
+        /// Lowering the pivot drops the whole body, feet included, which with a real model puts
+        /// the boots through the canvas. CrouchPose bends the knees instead and Bootstrap turns
+        /// this off whenever it adds one; the capsules have no knees, so they keep it.
+        public bool PivotCrouch = true;
 
         [Header("Knockdown")]
         public Vector3 DownPosition = new Vector3(0f, -0.72f, -0.08f);
@@ -195,7 +199,7 @@ namespace TheFighter
             get { return Owner == null || Owner.CurrentStance == Stance.Orthodox; }
         }
 
-        /// Public because GuardPose needs to know which arm is throwing: the off-hand stays home
+        /// Public because ArmPose needs to know which arm is throwing: the off-hand stays home
         /// while the other one goes, and that single detail is most of what separates a boxer from
         /// somebody swinging.
         public bool IsLeftHand(HandRole role)
@@ -474,8 +478,11 @@ namespace TheFighter
 
             angles.z -= Owner.LeanAmount * LeanDegrees;
             position.x += Owner.LeanAmount * LeanSideShift;
-            position.y -= Owner.CrouchAmount * CrouchDip;
-            angles.x += Owner.CrouchAmount * CrouchPitch;
+            if (PivotCrouch)
+            {
+                position.y -= Owner.CrouchAmount * CrouchDip;
+                angles.x += Owner.CrouchAmount * CrouchPitch;
+            }
 
             position += _recoilPush * recoil;
             angles += _recoilAngles * recoil;

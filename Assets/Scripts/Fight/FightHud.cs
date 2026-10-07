@@ -34,6 +34,7 @@ namespace TheFighter
         static readonly Color HealthColor = new Color(0.86f, 0.22f, 0.22f);
         static readonly Color StaminaColor = new Color(0.95f, 0.76f, 0.22f);
         static readonly Color GuardColor = new Color(0.32f, 0.62f, 0.95f);
+        static readonly Color TraumaColor = new Color(0.95f, 0.45f, 0.78f);
         static readonly Color ZoneColor = new Color(1f, 1f, 1f, 0.16f);
 
         GUIStyle _label;
@@ -311,13 +312,15 @@ namespace TheFighter
             y += 15f * _scale;
 
             GUI.Label(new Rect(x, y, w, 14f * _scale),
-                "HP " + fighter.Health.ToString("0") + " / " + fighter.MaxHealth.ToString("0"), _small);
+                "HP " + fighter.Health.ToString("0") + " / " + fighter.MaxHealth.ToString("0")
+                + (fighter.HurtFactor > 0.01f
+                    ? "   HURT " + Mathf.RoundToInt(fighter.HurtFactor * 100f) + "%" : ""), _small);
             y += 16f * _scale;
 
-            Bar(new Rect(x, y, w * 0.82f, 8f * _scale), fighter.StaminaRatio, StaminaColor);
-            y += 11f * _scale;
-            Bar(new Rect(x, y, w * 0.82f, 6f * _scale), fighter.GuardRatio, GuardColor);
-            y += 11f * _scale;
+            y = LabelledBar(x, y, w * 0.82f, 8f, "STA", fighter.StaminaRatio, StaminaColor);
+            y = LabelledBar(x, y, w * 0.82f, 6f, "GRD", fighter.GuardRatio, GuardColor);
+            // Rises instead of draining: this one filling up is the knockdown.
+            y = LabelledBar(x, y, w * 0.82f, 6f, "CHIN", fighter.HeadTrauma, TraumaColor);
 
             FighterStats s = fighter.Stats;
             string stats = "PWR " + s.Power + "   END " + s.Endurance
@@ -590,6 +593,17 @@ namespace TheFighter
             GUI.DrawTexture(new Rect(rect.x, rect.y, t, rect.height), Texture2D.whiteTexture);
             GUI.DrawTexture(new Rect(rect.xMax - t, rect.y, t, rect.height), Texture2D.whiteTexture);
             GUI.color = Color.white;
+        }
+
+        /// A bar with its name in front of it, and returns the next y. Four unlabelled coloured
+        /// strips is a puzzle rather than a readout - "what is the blue one" is a HUD bug.
+        float LabelledBar(float x, float y, float width, float height, string name,
+            float fill, Color color)
+        {
+            float labelWidth = 40f * _scale;
+            GUI.Label(new Rect(x, y - 3f * _scale, labelWidth, 14f * _scale), name, _small);
+            Bar(new Rect(x + labelWidth, y, width - labelWidth, height * _scale), fill, color);
+            return y + (height + 5f) * _scale;
         }
 
         static void Bar(Rect rect, float fill, Color color)

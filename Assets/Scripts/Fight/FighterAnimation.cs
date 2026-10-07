@@ -37,7 +37,7 @@ namespace TheFighter
         [Header("Stance (looping)")]
         /// The one slot that must not be empty: an unweighted Humanoid snaps to T-pose.
         public ClipVariant[] Idle = new ClipVariant[0];
-        /// Leave empty to let GuardPose raise the gloves with IK instead.
+        /// Leave empty to let ArmPose raise the gloves with IK instead.
         public ClipVariant[] Guard = new ClipVariant[0];
 
         [Header("Footwork (looping) - all four blend, so diagonals use two at once")]
@@ -224,7 +224,7 @@ namespace TheFighter
         AvatarMask _upperMask;
         bool _built;
 
-        /// GuardPose reads this and stands down: if a guard clip exists, IK gloves fighting an
+        /// ArmPose reads this and stands down: if a guard clip exists, IK gloves fighting an
         /// animated guard gives you neither.
         public bool GuardClipAssigned { get; private set; }
 

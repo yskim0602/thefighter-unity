@@ -178,6 +178,7 @@ namespace TheFighter
             Health = MaxHealth;
             Stamina = MaxStamina;
             GuardGauge = CombatTuning.GuardGaugeMax;
+            HeadTrauma = 0f;
             Knockdowns = 0;
             TotalKnockdowns = 0;
             State = ActionState.Free;
@@ -281,6 +282,21 @@ namespace TheFighter
         // ------------------------------------------------------------------
 
         public float HealthRatio { get { return MaxHealth > 0f ? Health / MaxHealth : 0f; } }
+
+        /// Concussive load, 0 to 1. Reaching 1 is a knockdown. Decays, so it measures punches
+        /// landed *together* rather than punches landed.
+        public float HeadTrauma { get; private set; }
+
+        /// 0 while there is still something left, 1 when a fighter is out on his feet. Scales the
+        /// guard, the footwork and the timing - every one of them for the worse.
+        public float HurtFactor
+        {
+            get
+            {
+                return Mathf.Clamp01(Mathf.InverseLerp(CombatTuning.HurtThresholdRatio,
+                    CombatTuning.HurtFloorRatio, HealthRatio));
+            }
+        }
         public float StaminaRatio { get { return MaxStamina > 0f ? Stamina / MaxStamina : 0f; } }
         public float GuardRatio { get { return GuardGauge / CombatTuning.GuardGaugeMax; } }
         public bool IsExhausted { get { return Stamina <= 1f; } }
@@ -327,6 +343,10 @@ namespace TheFighter
         void Update()
         {
             float dt = Time.deltaTime;
+
+            // Decays whatever else is happening, including between rounds: the corner is where a
+            // fighter clears his head.
+            HeadTrauma = Mathf.Max(0f, HeadTrauma - CombatTuning.HeadTraumaDecayPerSecond * dt);
 
             if (!FightActive)
             {
@@ -458,7 +478,8 @@ namespace TheFighter
                 if (!GuardBroken)
                 {
                     GuardGauge = Mathf.Min(CombatTuning.GuardGaugeMax,
-                        GuardGauge + CombatTuning.GuardGaugeRegenPerSecond * dt);
+                        GuardGauge + CombatTuning.GuardGaugeRegenPerSecond * dt
+                            * Mathf.Lerp(1f, CombatTuning.HurtGuardRegenMultiplier, HurtFactor));
                 }
             }
         }
@@ -525,7 +546,8 @@ namespace TheFighter
         void HandleMovement(FighterIntent intent, float dt)
         {
             Vector2 move = Vector2.ClampMagnitude(intent.Move, 1f);
-            float speed = Stats.MoveSpeed * _profile.Footwork / Mathf.Max(0.1f, Tempo);
+            float speed = Stats.MoveSpeed * _profile.Footwork / Mathf.Max(0.1f, Tempo)
+                * Mathf.Lerp(1f, CombatTuning.HurtMoveMultiplier, HurtFactor);
 
             if (CrouchAmount > 0.01f)
             {
@@ -617,7 +639,8 @@ namespace TheFighter
         /// Speed owns the outgoing half of a punch.
         float PunchSpeedScale()
         {
-            float scale = Stats.PunchSpeedScale * Mathf.Max(0.1f, Tempo);
+            float scale = Stats.PunchSpeedScale * Mathf.Max(0.1f, Tempo)
+                * Mathf.Lerp(1f, CombatTuning.HurtTimingMultiplier, HurtFactor);
             if (IsExhausted)
             {
                 scale *= CombatTuning.ExhaustedTimingMultiplier;
@@ -629,7 +652,8 @@ namespace TheFighter
         float RecoveryScale()
         {
             float scale = Stats.RecoveryScale * Mathf.Max(0.1f, Tempo)
-                / Mathf.Max(0.5f, _profile.Stamina);
+                / Mathf.Max(0.5f, _profile.Stamina)
+                * Mathf.Lerp(1f, CombatTuning.HurtTimingMultiplier, HurtFactor);
             if (IsExhausted)
             {
                 scale *= CombatTuning.ExhaustedTimingMultiplier;
@@ -916,6 +940,9 @@ namespace TheFighter
                 {
                     leak *= CombatTuning.BodyGuardLeakMultiplier;
                 }
+
+                // The hands do not come all the way up any more.
+                leak *= Mathf.Lerp(1f, CombatTuning.HurtGuardLeakMultiplier, HurtFactor);
                 leak += punch.GuardPierce;
 
                 if (_guardHeldTime <= CombatTuning.PerfectBlockWindow)
@@ -940,6 +967,10 @@ namespace TheFighter
 
                 if (zone == HitZone.Head)
                 {
+                    // The chin, not the bar. A hurt fighter's goes sooner.
+                    HeadTrauma += damage * CombatTuning.HeadTraumaPerDamage
+                        * Mathf.Lerp(1f, CombatTuning.HeadTraumaHurtMultiplier, HurtFactor);
+
                     if (UnityEngine.Random.value < CombatTuning.HeadStaggerChance)
                     {
                         Stagger();
@@ -950,6 +981,12 @@ namespace TheFighter
                     Stamina = Mathf.Max(0f, Stamina - damage * CombatTuning.BodyStaminaDamageMultiplier);
                 }
             }
+
+            // Only now does any of it reach the bar, and how much depends on where it landed.
+            // A guarded punch keeps its raw damage for the gauge above; this is what gets through.
+            damage *= zone == HitZone.Head
+                ? CombatTuning.HeadHealthMultiplier
+                : CombatTuning.BodyHealthMultiplier;
 
             Health = Mathf.Max(0f, Health - damage);
             evt.Damage = damage;
@@ -969,9 +1006,12 @@ namespace TheFighter
                 Rig.PlayHitReaction(zone, reactionDamage, push);
             }
 
-            if (Health <= 0f)
+            // Two ways to go down, and they mean different things: the bar emptying is a fighter
+            // worn out, the chin going is a fighter caught.
+            if (Health <= 0f || HeadTrauma >= 1f)
             {
                 evt.CausedKnockdown = true;
+                HeadTrauma = CombatTuning.HeadTraumaAfterKnockdown;
                 Knockdown();
             }
 

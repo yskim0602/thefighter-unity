@@ -67,6 +67,12 @@ namespace TheFighter
         public BoxerClipSet OrthodoxClips = new BoxerClipSet();
         public BoxerClipSet SouthpawClips = new BoxerClipSet();
 
+        [Header("Gloves")]
+        /// Leave empty for gloves built from primitives. Drop a glove model here to replace them -
+        /// it is parented to the hand bone and aimed down the forearm, same as the built ones.
+        public GameObject GloveModel;
+        public float GloveScale = 1f;
+
         [Header("Look")]
         public Color PlayerColor = new Color(0.22f, 0.42f, 0.78f);
         public Color OpponentColor = new Color(0.75f, 0.24f, 0.24f);
@@ -461,20 +467,96 @@ namespace TheFighter
             rig.HandSource = animator;
             rig.ProceduralMotionWeight = Mathf.Clamp01(ModelProceduralMotion);
 
-            // Added before GuardPose on purpose: LateUpdate runs in the order components were
-            // added, and the hip height fix has to land before the arm IK reads bone positions.
+            // Order matters, because LateUpdate runs components in the order they were added and
+            // each of these reads the bone positions the one before it left behind:
+            //   FighterAnimation  poses the whole skeleton from the clips
+            //   CrouchPose        drops the hips, so the legs must be solved after the pose
+            //   ArmPose           last, because the arms hang off a spine the crouch just moved
             FighterAnimation animation = fighter.gameObject.AddComponent<FighterAnimation>();
             animation.Owner = fighter;
             animation.ModelAnimator = animator;
             animation.OrthodoxClips = OrthodoxClips;
             animation.SouthpawClips = SouthpawClips;
 
+            CrouchPose crouch = fighter.gameObject.AddComponent<CrouchPose>();
+            crouch.Owner = fighter;
+            crouch.ModelAnimator = animator;
+            rig.PivotCrouch = false;
+
             if (UseIkGuard)
             {
-                GuardPose guard = fighter.gameObject.AddComponent<GuardPose>();
-                guard.Owner = fighter;
-                guard.ModelAnimator = animator;
+                ArmPose arms = fighter.gameObject.AddComponent<ArmPose>();
+                arms.Owner = fighter;
+                arms.ModelAnimator = animator;
             }
+
+            AttachGloves(animator, rig);
+        }
+
+        /// Boxing gloves, built from primitives and parented to the hand bones. Mixamo's X Bot has
+        /// bare fists, and a boxer without gloves reads as a man shadowboxing in a gym whatever
+        /// else is right. Two shapes each: a squashed sphere for the padding and a short cuff at
+        /// the wrist, which is enough silhouette at broadcast distance.
+        ///
+        /// Drop a real glove model into GloveModel to replace them - it gets parented and oriented
+        /// the same way, so nothing else changes.
+        void AttachGloves(Animator animator, FighterRig rig)
+        {
+            AttachGlove(animator.GetBoneTransform(HumanBodyBones.LeftHand),
+                animator.GetBoneTransform(HumanBodyBones.LeftLowerArm), rig);
+            AttachGlove(animator.GetBoneTransform(HumanBodyBones.RightHand),
+                animator.GetBoneTransform(HumanBodyBones.RightLowerArm), rig);
+        }
+
+        void AttachGlove(Transform wrist, Transform forearm, FighterRig rig)
+        {
+            if (wrist == null)
+            {
+                return;
+            }
+
+            GameObject glove = new GameObject("Glove");
+            glove.transform.SetParent(wrist, false);
+            glove.transform.localPosition = Vector3.zero;
+
+            // Aimed down the forearm rather than by the bone's own axis, because no two rigs agree
+            // on which way a hand bone points.
+            if (forearm != null)
+            {
+                Vector3 along = wrist.position - forearm.position;
+                if (along.sqrMagnitude > 0.000001f)
+                {
+                    glove.transform.rotation = Quaternion.LookRotation(along.normalized, wrist.up);
+                }
+            }
+
+            if (GloveModel != null)
+            {
+                GameObject model = Instantiate(GloveModel, glove.transform);
+                model.transform.localPosition = Vector3.zero;
+                model.transform.localRotation = Quaternion.identity;
+                model.transform.localScale = Vector3.one * GloveScale;
+                Strip(model);
+                return;
+            }
+
+            // Local space here is the glove's: z runs out along the knuckles.
+            GameObject pad = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            pad.name = "Pad";
+            pad.transform.SetParent(glove.transform, false);
+            pad.transform.localPosition = new Vector3(0f, 0f, 0.055f * GloveScale);
+            pad.transform.localScale = new Vector3(0.115f, 0.125f, 0.145f) * GloveScale;
+            Paint(pad, GloveColor);
+            Strip(pad);
+
+            GameObject cuff = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            cuff.name = "Cuff";
+            cuff.transform.SetParent(glove.transform, false);
+            cuff.transform.localPosition = new Vector3(0f, 0f, -0.035f * GloveScale);
+            cuff.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+            cuff.transform.localScale = new Vector3(0.085f, 0.045f, 0.085f) * GloveScale;
+            Paint(cuff, GloveColor * 0.72f);
+            Strip(cuff);
         }
 
         /// Mixamo exports in centimetres. If the FBX importer's unit conversion did not take, the
