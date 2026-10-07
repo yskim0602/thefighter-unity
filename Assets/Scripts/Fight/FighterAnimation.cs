@@ -42,6 +42,12 @@ namespace TheFighter
         public HitDirection Direction = HitDirection.Any;
         public HitSeverity Force = HitSeverity.Any;
 
+        /// Which arm this clip swings. Auto reads it off the file name, and a clip that says
+        /// nothing serves either arm. A punch clip for the wrong arm is the one mismatch that
+        /// cannot be fixed at runtime - the Playables API has no mirror - so instead the clip
+        /// declares its side and only gets picked when that side is the one throwing.
+        public ClipSide Side = ClipSide.Auto;
+
         /// Routes this clip to the full-body layer instead of the masked upper-body one.
         ///
         /// **Costs the crouch.** A full-body punch overrides the legs, so it cannot be thrown from
@@ -278,6 +284,7 @@ namespace TheFighter
             public Layer Layer;
             public HitDirection Direction;
             public HitSeverity Force;
+            public ClipSide Side;
             /// Whether the window was worked out rather than typed, so the log can say which.
             public bool AutoWindow;
             public float Start;
@@ -345,6 +352,7 @@ namespace TheFighter
         bool _punchWasActive;
         float _lastProgress;
         int _punchVariant = -1;
+        ClipSide _punchSide = ClipSide.Auto;
         int _guardHookVariant = -1;
         bool _hitActive;
         float _hitClock;
@@ -368,6 +376,13 @@ namespace TheFighter
 
         void OnDestroy()
         {
+            // Leaving this pointing at a destroyed component would have the fighter asking a
+            // dead clip set which arms he has.
+            if (Owner != null && Owner.HasPunchClip == HasPunchClipFor)
+            {
+                Owner.HasPunchClip = null;
+            }
+
             if (_graph.IsValid())
             {
                 _graph.Destroy();
@@ -487,6 +502,10 @@ namespace TheFighter
             _graph.Play();
             _built = true;
 
+            // Gameplay can now ask which arms it has motions for, which is what keeps an
+            // either-hand punch off a hand with no clip.
+            Owner.HasPunchClip = HasPunchClipFor;
+
             // One reaction, not two. With clips in the slots the procedural snap becomes a sharp
             // first frame on top rather than a second, differently-timed reaction underneath.
             if (Owner.Rig != null && (_hitHead.Count > 0 || _hitBody.Count > 0))
@@ -498,6 +517,27 @@ namespace TheFighter
             {
                 ReportClipFit();
             }
+        }
+
+        /// Whether this punch has a clip that animates the given side. A clip with no side in
+        /// its name serves either arm, so one untagged clip answers yes to both.
+        bool HasPunchClipFor(PunchKind kind, bool left)
+        {
+            List<int> variants = _punches[(int)kind];
+            ClipSide want = left ? ClipSide.Left : ClipSide.Right;
+
+            for (int i = 0; i < variants.Count; i++)
+            {
+                ClipSide side = _entries[variants[i]].Side;
+                if (side == ClipSide.Auto || side == want)
+                {
+                    return true;
+                }
+            }
+
+            // No clip at all is not a reason to refuse the hand - the procedural punch still
+            // works, and it is mirrored by construction.
+            return variants.Count == 0;
         }
 
         /// A punch's window has to be shown inside the punch's own duration, and the ratio between
@@ -665,6 +705,8 @@ namespace TheFighter
                 ? variant.Direction : DirectionFromName(entry.Clip.name);
             entry.Force = variant.Force != HitSeverity.Any
                 ? variant.Force : ForceFromName(entry.Clip.name);
+            entry.Side = variant.Side != ClipSide.Auto
+                ? variant.Side : SideFromName(entry.Clip.name);
 
             // Unity fills a freshly grown array element with zeroes, so an untouched window is a
             // degenerate one. That used to mean "the whole clip"; it now means "fit it".
@@ -697,6 +739,16 @@ namespace TheFighter
             if (lower.Contains("front") || lower.Contains("forward")) { return HitDirection.Front; }
             if (lower.Contains("back") || lower.Contains("behind")) { return HitDirection.Back; }
             return HitDirection.Any;
+        }
+
+        static ClipSide SideFromName(string name)
+        {
+            string lower = name.ToLowerInvariant();
+            // "Lead" does not contain "left", so a clip called Lead Jab stays Auto and serves
+            // whichever arm leads - which is what it should do in both stances.
+            if (lower.Contains("left")) { return ClipSide.Left; }
+            if (lower.Contains("right")) { return ClipSide.Right; }
+            return ClipSide.Auto;
         }
 
         static HitSeverity ForceFromName(string name)
@@ -811,12 +863,22 @@ namespace TheFighter
 
                 // A fresh punch gets a fresh variant. Progress running backwards catches a combo
                 // cancel, where one punch replaces another without passing through null.
-                bool fresh = !_punchWasActive || _lastKind != punch.Kind || progress + 0.01f < _lastProgress;
+                bool left = Owner.Rig != null && Owner.Rig.IsLeftHand(Owner.ActiveHand);
+                ClipSide side = left ? ClipSide.Left : ClipSide.Right;
+
+                // A fresh punch gets a fresh variant. Progress running backwards catches a combo
+                // cancel, where one punch replaces another without passing through null - and a
+                // changed side catches the same hook coming off the other hand, which must not
+                // keep the clip that swings the arm now standing still.
+                bool fresh = !_punchWasActive || _lastKind != punch.Kind
+                    || progress + 0.01f < _lastProgress || _punchSide != side;
                 _punchWasActive = true;
                 _lastKind = punch.Kind;
                 _lastProgress = progress;
+                _punchSide = side;
 
-                int entry = Pick(_punches[(int)punch.Kind], ref _punchVariant, !fresh);
+                int entry = Pick(_punches[(int)punch.Kind], ref _punchVariant, !fresh,
+                    HitDirection.Any, HitSeverity.Any, side);
                 return Scrub(entry, progress);
             }
 
@@ -902,7 +964,13 @@ namespace TheFighter
         /// Holds onto the variant already in play, or rolls a new one.
         int Pick(List<int> options, ref int held, bool keep)
         {
-            return Pick(options, ref held, keep, HitDirection.Any, HitSeverity.Any);
+            return Pick(options, ref held, keep, HitDirection.Any, HitSeverity.Any, ClipSide.Auto);
+        }
+
+        int Pick(List<int> options, ref int held, bool keep,
+            HitDirection direction, HitSeverity force)
+        {
+            return Pick(options, ref held, keep, direction, force, ClipSide.Auto);
         }
 
         /// Picks the clip that best fits the situation, rather than any clip in the slot.
@@ -914,7 +982,7 @@ namespace TheFighter
         /// fighter snapping right from a punch that came from the right is worse than no reaction.
         /// Ties are broken at random, which is where variety comes from.
         int Pick(List<int> options, ref int held, bool keep,
-            HitDirection direction, HitSeverity force)
+            HitDirection direction, HitSeverity force, ClipSide side)
         {
             if (options.Count == 0)
             {
@@ -934,7 +1002,7 @@ namespace TheFighter
             for (int i = 0; i < options.Count; i++)
             {
                 Entry entry = _entries[options[i]];
-                int score = Score(entry, direction, force);
+                int score = Score(entry, direction, force, side);
                 if (score < 0)
                 {
                     continue;
@@ -968,9 +1036,21 @@ namespace TheFighter
             return best;
         }
 
-        static int Score(Entry entry, HitDirection direction, HitSeverity force)
+        static int Score(Entry entry, HitDirection direction, HitSeverity force, ClipSide side)
         {
             int score = 0;
+
+            // Side is the one condition that disqualifies rather than merely scoring: a clip for
+            // the other arm is never an acceptable substitute, because the arm it swings is not
+            // the arm the hit test, the aim and the guard release are following.
+            if (entry.Side != ClipSide.Auto && side != ClipSide.Auto && entry.Side != side)
+            {
+                return -1;
+            }
+            if (entry.Side != ClipSide.Auto && entry.Side == side)
+            {
+                score += 3;
+            }
 
             if (entry.Direction != HitDirection.Any)
             {
@@ -1193,7 +1273,39 @@ namespace TheFighter
                 PunchDefinition punch = PunchLibrary.Get(kind);
                 List<int> variants = _punches[(int)kind];
 
+                if (variants.Count == 0)
+                {
+                    // Already reported as "(no clip)" by the fit lines above.
+                    continue;
+                }
+
                 bool throwsLeft = punch.Hand == HandRole.Lead ? leadIsLeft : !leadIsLeft;
+
+                // A punch that can come off either hand has no wrong side - it has a covered
+                // side and an uncovered one, so that is what gets reported.
+                if (punch.EitherHand)
+                {
+                    bool hasLeft = false;
+                    bool hasRight = false;
+                    for (int v = 0; v < variants.Count; v++)
+                    {
+                        if (_entries[variants[v]].Side == ClipSide.Left) { hasLeft = true; }
+                        if (_entries[variants[v]].Side == ClipSide.Right) { hasRight = true; }
+                        if (_entries[variants[v]].Side == ClipSide.Auto) { hasLeft = hasRight = true; }
+                    }
+
+                    report.Append("\n  ").Append(punch.DisplayName)
+                        .Append("  either hand:  left ").Append(hasLeft ? "yes" : "NO")
+                        .Append("   right ").Append(hasRight ? "yes" : "NO");
+
+                    if (!hasLeft || !hasRight)
+                    {
+                        wrong = true;
+                        report.Append("   - the uncovered side falls back to the other clip, "
+                            + "which swings the wrong arm");
+                    }
+                    continue;
+                }
 
                 for (int v = 0; v < variants.Count; v++)
                 {
@@ -1294,7 +1406,7 @@ namespace TheFighter
             report.Append("\n  ").Append(name)
                 .Append("  ").Append(entry.Clip.name)
                 .Append("  [").Append(entry.Direction).Append('/').Append(entry.Force)
-                .Append(']')
+                .Append('/').Append(entry.Side).Append(']')
                 .Append("  clip ").Append(entry.Length.ToString("0.00")).Append('s')
                 .Append("  window ").Append(entry.Start.ToString("0.00"))
                 .Append('-').Append(entry.End.ToString("0.00"))

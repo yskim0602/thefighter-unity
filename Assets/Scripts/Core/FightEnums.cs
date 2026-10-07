@@ -20,6 +20,16 @@ namespace TheFighter
         Uppercut
     }
 
+    /// Which arm a clip actually animates. Not Lead/Rear: a clip moves a *side*, and which side
+    /// is the lead one depends on the stance it is played on.
+    public enum ClipSide
+    {
+        /// Matches either. A clip that does not say which arm it swings serves both.
+        Auto,
+        Left,
+        Right
+    }
+
     /// Which way a punch arrived, in the *defender's* frame. A left hook from the man in front
     /// of you lands on your right, so this is worked out from the contact point rather than from
     /// which hand threw it.

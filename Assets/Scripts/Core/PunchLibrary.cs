@@ -7,6 +7,14 @@ namespace TheFighter
         public string DisplayName;
         public HandRole Hand;
 
+        /// Whether this punch can be thrown with either hand, Hand being only its default.
+        ///
+        /// Boxing has a left hook and a right hook and they are the same punch; pinning the hook
+        /// to the lead hand made the right one unrepresentable, so a right hook clip dropped into
+        /// the slot swung an arm the fight was not throwing with. A straight and a jab really are
+        /// one hand each, which is why this is per-punch rather than universal.
+        public bool EitherHand;
+
         public float DamageMultiplier;
         public float StaminaCost;
 
@@ -81,6 +89,7 @@ namespace TheFighter
             Kind = PunchKind.Hook,
             DisplayName = "HOOK",
             Hand = HandRole.Lead,
+            EitherHand = true,
             DamageMultiplier = 1.15f,
             StaminaCost = 11f,
             WindupTime = 0.20f,
@@ -99,6 +108,7 @@ namespace TheFighter
             Kind = PunchKind.Uppercut,
             DisplayName = "UPPERCUT",
             Hand = HandRole.Rear,
+            EitherHand = true,
             DamageMultiplier = 1.35f,
             StaminaCost = 13f,
             // 0.26/0.17/0.42 put a whole Mixamo windmill on screen; 0.18/0.13/0.30 cut it so

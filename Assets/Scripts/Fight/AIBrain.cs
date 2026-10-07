@@ -306,19 +306,37 @@ namespace TheFighter
                 return;
             }
 
-            if (roll < 0.52f && !_self.GuardBroken)
+            // Which answer is even available depends on the punch's path, not just its height.
+            // A hook arcs in from the side, so slipping laterally walks the head into it and the
+            // hands have to come up tight; an uppercut comes up the middle, where the guard is
+            // no help at all and the head has to leave. The thresholds move, not the branches.
+            float guardChance = 0.52f;
+            float leanChance = 0.20f;
+            if (punch != null && punch.Kind == PunchKind.Hook)
+            {
+                guardChance = 0.74f;
+                leanChance = 0.04f;
+            }
+            else if (punch != null && punch.Kind == PunchKind.Uppercut)
+            {
+                guardChance = 0.30f;
+                leanChance = 0.34f;
+            }
+
+            if (roll < guardChance && !_self.GuardBroken)
             {
                 _guardTimer = Random.Range(0.3f, 0.6f);
                 return;
             }
-            if (roll < 0.72f)
+            if (roll < guardChance + leanChance)
             {
                 _leanTimer = Random.Range(0.22f, 0.4f);
-                // Lean away from the hand it is coming from, not at random.
-                _leanDirection = punch.Hand == HandRole.Lead ? 1f : -1f;
+                // Lean away from the hand it is coming from, not at random - and from the hand
+                // actually throwing, since a hook can arrive off either one.
+                _leanDirection = _opponent.ActiveHand == HandRole.Lead ? 1f : -1f;
                 return;
             }
-            if (roll < 0.88f)
+            if (roll < guardChance + leanChance + 0.16f)
             {
                 _dodgeQueued = true;
                 return;

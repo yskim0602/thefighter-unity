@@ -26,6 +26,15 @@ namespace TheFighter
         /// Leaning and ducking move this, which is what makes head movement a real defence.
         public Transform HeadHurtbox;
         public FighterRig Rig;
+
+        /// Installed by FighterAnimation when there is one: does a clip exist for this punch on
+        /// this side? Left over right, as a bool, because the clip set knows nothing about stance.
+        ///
+        /// Gameplay asking animation a question is deliberate and narrow. A punch thrown with a
+        /// hand that has no clip does not degrade gracefully - the other arm swings while the
+        /// throwing arm hangs there - so for a punch that can legitimately come off either hand,
+        /// which clips exist is part of what the fighter can do.
+        public System.Func<PunchKind, bool, bool> HasPunchClip;
         public Renderer[] BodyRenderers;
 
         [Header("Match")]
@@ -101,6 +110,7 @@ namespace TheFighter
         float _phaseTimer;
         float _phaseDuration;
         bool _punchLanded;
+        HandRole _lastHand = HandRole.Rear;
         float _recoveryFrom = 1f;
         float _guardHeldTime;
         float _guardBreakTimer;
@@ -198,6 +208,7 @@ namespace TheFighter
             IsGuarding = false;
             IsDodging = false;
             IsFeinting = false;
+            _lastHand = HandRole.Rear;
             GuardBroken = false;
             _phaseTimer = 0f;
             _phaseDuration = 0f;
@@ -708,9 +719,13 @@ namespace TheFighter
             // Combos have to flow. The second punch of a one-two starts before the first hand is
             // all the way back - but only with the *other* hand, so one glove cannot machine-gun,
             // and it costs extra gas. That one rule is what turns single punches into boxing.
+            HandRole hand = ResolveHand(punch);
+
+            // Compared against the hand actually in the air rather than the punch kind's default,
+            // which now that a hook can come off either hand are not the same thing.
             bool cancelling = State == ActionState.Recovery
                 && ActivePunch != null
-                && punch.Hand != ActivePunch.Hand
+                && hand != ActiveHand
                 && _phaseTimer / _phaseDuration >= CombatTuning.ComboCancelFraction;
 
             if (State != ActionState.Free && !cancelling)
@@ -735,7 +750,8 @@ namespace TheFighter
             IsGuarding = false;
             _guardHeldTime = 0f;
             ActivePunch = punch;
-            ActiveHand = punch.Hand;
+            ActiveHand = hand;
+            _lastHand = hand;
             IsFeinting = intent.Feint;
 
             // How much weight there was left to move. Decided now, not when the punch lands -
@@ -751,6 +767,46 @@ namespace TheFighter
             {
                 Threw(this, punch);
             }
+        }
+
+        /// Which hand throws this one.
+        ///
+        /// Fixed for a jab or a straight. A hook comes off whichever hand is free, so a
+        /// combination alternates the way a real one does - jab, right hook, left hook - and the
+        /// combo-cancel rule, which only lets the other hand interrupt, keeps letting it flow.
+        /// Thrown cold it is the lead hook, which is the one you lead with.
+        HandRole ResolveHand(PunchDefinition punch)
+        {
+            if (!punch.EitherHand)
+            {
+                return punch.Hand;
+            }
+
+            bool chaining = ActivePunch != null || _comboTimer > 0f;
+            HandRole wanted = chaining
+                ? (_lastHand == HandRole.Lead ? HandRole.Rear : HandRole.Lead)
+                : punch.Hand;
+
+            // Only the clip set can veto it. With both sides animated this never fires; with one
+            // side animated - a single left uppercut, say - every uppercut becomes the left one
+            // instead of half of them swinging an arm that is standing still.
+            if (ClipExistsFor(punch.Kind, wanted))
+            {
+                return wanted;
+            }
+
+            HandRole other = wanted == HandRole.Lead ? HandRole.Rear : HandRole.Lead;
+            return ClipExistsFor(punch.Kind, other) ? other : wanted;
+        }
+
+        bool ClipExistsFor(PunchKind kind, HandRole hand)
+        {
+            if (HasPunchClip == null || Rig == null)
+            {
+                return true;
+            }
+
+            return HasPunchClip(kind, Rig.IsLeftHand(hand));
         }
 
         /// Speed owns the outgoing half of a punch.
@@ -1059,7 +1115,11 @@ namespace TheFighter
         /// jab is a range-finder and barely notices.
         float TransferPower(PunchDefinition punch)
         {
-            float share = punch.Hand == HandRole.Rear
+            // The hand in the air, not the punch kind's default hand. A hook comes off either
+            // one, and it is the rear hand that has the weight behind it - reading the definition
+            // here would score every right hook as if it were a lead hook and quietly take two
+            // thirds of its power away.
+            float share = ActiveHand == HandRole.Rear
                 ? CombatTuning.RearTransferShare
                 : CombatTuning.LeadTransferShare;
 
