@@ -34,6 +34,25 @@ namespace TheFighter
         public const float GuardGaugeRegenPerSecond = 14f;
         public const float GuardBreakStunTime = 1.5f;
 
+        // --- Ducking as a technique ----------------------------------------
+        // Slip the jab, drop, and go to the body. That sequence is the first real *technique* in
+        // the game rather than a button, so the numbers have to make it worth doing: the duck
+        // tucks the head behind the gloves, and a short punch thrown from a low base is faster and
+        // carries the legs behind it.
+        /// How much of the head's guard leak a full duck closes - the chin is behind the gloves.
+        public const float CrouchHeadCover = 0.45f;
+        /// A body punch from a low base is a short punch. Below 1 is faster.
+        public const float CrouchBodyPunchSpeed = 0.78f;
+        /// And it has the legs under it.
+        public const float CrouchBodyDamage = 1.2f;
+
+        // --- Feints --------------------------------------------------------
+        /// A feint is a windup with nothing behind it: it buys a reaction. Cheap, but not free,
+        /// or it would simply be the best thing to do at all times.
+        public const float FeintStaminaRatio = 0.35f;
+        /// A feint's hand comes back faster than a real punch's, which is what lets it set one up.
+        public const float FeintRecoveryRatio = 0.55f;
+
         // --- Counters ------------------------------------------------------
         /// Blocking within this many seconds of raising the guard is a "perfect" block.
         public const float PerfectBlockWindow = 0.18f;

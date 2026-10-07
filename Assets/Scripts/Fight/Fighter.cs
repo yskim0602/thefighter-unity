@@ -61,6 +61,8 @@ namespace TheFighter
         public float CrouchAmount { get; private set; }
 
         public PunchDefinition ActivePunch { get; private set; }
+        /// The windup is real; the punch is not. Nothing will be thrown, and nothing will land.
+        public bool IsFeinting { get; private set; }
         public HandRole ActiveHand { get; private set; }
         /// -PunchLoadTrack while loading, 0 -> 1 as the glove extends. FighterRig turns this into a pose.
         public float PunchTrack { get; private set; }
@@ -187,6 +189,7 @@ namespace TheFighter
             AimHeight = 1f;
             IsGuarding = false;
             IsDodging = false;
+            IsFeinting = false;
             GuardBroken = false;
             _phaseTimer = 0f;
             _phaseDuration = 0f;
@@ -451,9 +454,14 @@ namespace TheFighter
 
         void HandleGuard(FighterIntent intent, float dt)
         {
+            // Recovery counts. Bringing the hands back from a punch *is* raising the guard, and
+            // locking it out until Free meant a straight (0.28s of recovery) could not be followed
+            // by a block at all - an incoming jab lands in 0.20s. The counter after your own punch
+            // was unblockable by construction, which is what "the guard does not come up" was.
+            // Windup still commits you: once the hand goes, it goes.
             bool wants = intent.Guard
                 && !GuardBroken
-                && State == ActionState.Free
+                && (State == ActionState.Free || State == ActionState.Recovery)
                 && !IsDodging;
 
             if (wants)
@@ -633,6 +641,10 @@ namespace TheFighter
             {
                 cost *= CombatTuning.ComboCancelStaminaMultiplier;
             }
+            if (intent.Feint)
+            {
+                cost *= CombatTuning.FeintStaminaRatio;
+            }
 
             Stamina = Mathf.Max(0f, Stamina - cost);
             _comboStacks = Mathf.Min(CombatTuning.ComboMaxStacks, _comboStacks + 1);
@@ -642,6 +654,7 @@ namespace TheFighter
             _guardHeldTime = 0f;
             ActivePunch = punch;
             ActiveHand = punch.Hand;
+            IsFeinting = intent.Feint;
             _punchLanded = false;
             EnterPhase(ActionState.Windup, punch.WindupTime * PunchSpeedScale());
             TrackGlove();
@@ -658,6 +671,11 @@ namespace TheFighter
         {
             float scale = Stats.PunchSpeedScale * Mathf.Max(0.1f, Tempo)
                 * Mathf.Lerp(1f, CombatTuning.HurtTimingMultiplier, HurtFactor);
+
+            // Crouched and throwing downstairs: a short punch from a low base. Both conditions,
+            // so ducking does not quietly speed up head shots too.
+            float low = CrouchAmount * (1f - AimHeight);
+            scale *= Mathf.Lerp(1f, CombatTuning.CrouchBodyPunchSpeed, Mathf.Clamp01(low));
             if (IsExhausted)
             {
                 scale *= CombatTuning.ExhaustedTimingMultiplier;
@@ -703,6 +721,18 @@ namespace TheFighter
 
                 if (State == ActionState.Windup)
                 {
+                    if (IsFeinting)
+                    {
+                        // No strike phase at all, so there is no hit test and no whiff - a feint
+                        // cannot land and cannot miss. The hand comes back quickly, which is what
+                        // lets it set up the punch that follows.
+                        _recoveryFrom = PunchTrack;
+                        EnterPhase(ActionState.Recovery, ActivePunch.RecoveryTime
+                            * CombatTuning.FeintRecoveryRatio * RecoveryScale());
+                        _phaseTimer = carry;
+                        continue;
+                    }
+
                     EnterPhase(ActionState.Strike, ActivePunch.StrikeTime * PunchSpeedScale());
                     _phaseTimer = carry;
                 }
@@ -779,6 +809,7 @@ namespace TheFighter
         void EndPunch()
         {
             ActivePunch = null;
+            IsFeinting = false;
             PunchTrack = 0f;
             _phaseTimer = 0f;
             _phaseDuration = 0f;
@@ -904,6 +935,12 @@ namespace TheFighter
                 damage *= CombatTuning.ExhaustedDamageMultiplier;
             }
 
+            // The legs are behind a body shot thrown from a duck.
+            if (hurtbox.Zone == HitZone.Body)
+            {
+                damage *= Mathf.Lerp(1f, CombatTuning.CrouchBodyDamage, CrouchAmount);
+            }
+
             float counterMultiplier = 1f;
             if (_counterWindowTimer > 0f)
             {
@@ -960,6 +997,13 @@ namespace TheFighter
 
                 // The hands do not come all the way up any more.
                 leak *= Mathf.Lerp(1f, CombatTuning.HurtGuardLeakMultiplier, HurtFactor);
+
+                // Bent at the waist behind a high guard, the chin is the hardest thing in boxing
+                // to find. Head only - the ribs are what you have left open, which is the trade.
+                if (zone == HitZone.Head)
+                {
+                    leak *= 1f - CrouchAmount * CombatTuning.CrouchHeadCover;
+                }
                 leak += punch.GuardPierce;
 
                 if (_guardHeldTime <= CombatTuning.PerfectBlockWindow)

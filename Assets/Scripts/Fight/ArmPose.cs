@@ -36,9 +36,14 @@ namespace TheFighter
         [Range(0f, 1f)] public float IdleGuardWeight = 0.45f;
         [Range(0f, 1f)] public float MaxWeight = 1f;
         /// With a Guard clip assigned, an animated guard and a full IK guard fight each other and
-        /// you get neither - so the clip takes the active guard and this drops back to the idle
-        /// pull. Clear the Guard slot to hand the whole job to IK.
+        /// you get neither - so the clip leads and IK only assists. Clear the Guard slot to hand
+        /// the whole job to IK.
         public bool DeferToGuardClip = true;
+        /// How much IK still applies while a Guard clip is leading. Not zero: standing down
+        /// completely leaves the guard entirely at the mercy of how good that clip happens to be,
+        /// and "the guard does not really come up" is the one thing a boxing game cannot have.
+        /// This guarantees the gloves reach the cheeks whatever the clip does.
+        [Range(0f, 1f)] public float GuardClipAssist = 0.55f;
 
         [Header("Punch aim")]
         /// 0 leaves punches aimed wherever the clip aimed them. 1 drags the hand all the way onto
@@ -48,6 +53,9 @@ namespace TheFighter
         /// Where on the extension the aim starts blending in, on Fighter.PunchTrack. Early enough
         /// to steer the shot, late enough that the wind-up is still the clip's.
         public float AimStartTrack = 0.3f;
+        /// How much of that aim a feint gets. Some, so it reads as a punch; not all, because a
+        /// feint only works if it cannot be told from one in time.
+        [Range(0f, 1f)] public float FeintAimWeight = 0.5f;
 
         [Header("Where the elbow goes")]
         /// Which way the elbow is pushed off the straight shoulder-to-glove line. x is outward
@@ -131,12 +139,13 @@ namespace TheFighter
             bool floored = Owner.State == ActionState.Down || Owner.State == ActionState.KnockedOut;
             bool guarding = Owner.IsGuarding && !Owner.GuardBroken && !floored;
 
-            if (guarding && DeferToGuardClip && _animation != null && _animation.GuardClipAssigned)
+            float full = MaxWeight;
+            if (DeferToGuardClip && _animation != null && _animation.GuardClipAssigned)
             {
-                guarding = false;
+                full = Mathf.Min(MaxWeight, GuardClipAssist);
             }
 
-            float guardTarget = floored ? 0f : (guarding ? MaxWeight : IdleGuardWeight);
+            float guardTarget = floored ? 0f : (guarding ? full : IdleGuardWeight);
 
             // Aim only on the way out. On the way back the guard return takes the arm, which is
             // where it should be going anyway.
@@ -146,6 +155,11 @@ namespace TheFighter
                 && Owner.Opponent != null
                 && AimWeight > 0.001f;
 
+            // A feint has to read as a punch, so the arm is released and the shoulder turns - but
+            // it is not steered onto the chin. A feint that tracks its target perfectly is a tell,
+            // and the whole value of one is that it cannot be told apart in time.
+            float aimScale = Owner.IsFeinting ? FeintAimWeight : 1f;
+
             bool leftThrowing = Owner.ActivePunch != null && Owner.Rig != null
                 && Owner.Rig.IsLeftHand(Owner.ActiveHand);
 
@@ -153,7 +167,7 @@ namespace TheFighter
             if (aiming)
             {
                 float t = Mathf.InverseLerp(AimStartTrack, 1f, Owner.PunchTrack);
-                aim = Mathf.SmoothStep(0f, 1f, t) * AimWeight;
+                aim = Mathf.SmoothStep(0f, 1f, t) * AimWeight * aimScale;
             }
 
             SolveSide(true, leftThrowing, aim, guardTarget, ref _leftWeight);

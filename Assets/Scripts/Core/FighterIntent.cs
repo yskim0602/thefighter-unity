@@ -13,6 +13,9 @@ namespace TheFighter
         public bool Dodge;
         public bool ThrowPunch;
         public PunchKind Punch;
+        /// Throws the windup and nothing else. The hand never comes, so all it buys is whatever
+        /// the other fighter does about it - which is the whole idea.
+        public bool Feint;
         /// 0 = aiming at the body, 1 = aiming at the head.
         public float AimHeight;
         /// Head movement. -1 leans left, +1 right. Moves the head hurtbox, not the feet.
