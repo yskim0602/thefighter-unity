@@ -56,9 +56,13 @@ namespace TheFighter
         /// Solves the arms onto the cheeks for the guard, since there is no guard clip. Turn it off
         /// if you get one.
         public bool UseIkGuard = true;
-        /// How much of the procedural body motion survives once real clips are driving the model.
-        /// Kept low: the clips already breathe and lean, and doing both at once is exactly what
-        /// makes an animated model look boneless.
+        /// How much of the *cosmetic* procedural body motion survives once real clips are driving
+        /// the model - the idle breathing and the step bounce. Kept at 0: the clips already do
+        /// those, and doing both at once is exactly what makes an animated model look boneless.
+        ///
+        /// This does NOT cover weight transfer. The punch's lunge, hip rotation and lean are on
+        /// FighterRig.WeightTransferWeight and stay at 1 whatever the model, because no clip can
+        /// drive a punch on our timing - see CLAUDE.md.
         [Range(0f, 1f)] public float ModelProceduralMotion;
         /// Dragged once here and shared by both fighters, because a component added at runtime has
         /// nowhere of its own to hold Inspector references. Two sets, because a southpaw needs
@@ -66,6 +70,11 @@ namespace TheFighter
         /// Leave the southpaw set empty and nobody is dealt that stance.
         public BoxerClipSet OrthodoxClips = new BoxerClipSet();
         public BoxerClipSet SouthpawClips = new BoxerClipSet();
+
+        [Header("Diagnostics")]
+        /// Starts the posture probe visible. P toggles it in play, O resets its worst-case
+        /// readings. It measures nothing it can change.
+        public bool PostureProbeOn;
 
         [Header("Gloves")]
         /// Leave empty for gloves built from primitives. Drop a glove model here to replace them -
@@ -182,6 +191,12 @@ namespace TheFighter
             hud.CameraRig = rig;
             hud.Touch = touchBrain;
             hud.Feedback = feedback;
+
+            // Off until P. Measures the posture failures CLAUDE.md forbids, which are all things
+            // you catch by looking and then cannot describe precisely enough to fix.
+            PostureProbe probe = player.gameObject.AddComponent<PostureProbe>();
+            probe.Target = player;
+            probe.Visible = PostureProbeOn;
 
             Player = player;
             Enemy = enemy;

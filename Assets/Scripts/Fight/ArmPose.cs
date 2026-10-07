@@ -58,6 +58,17 @@ namespace TheFighter
         /// Throwing, the elbow comes up behind the fist rather than hanging.
         public Vector3 PunchElbowHint = new Vector3(0.25f, -0.55f, -0.3f);
 
+        [Header("Shoulder")]
+        /// How much the shoulder turns into the punch before the arm is solved.
+        ///
+        /// Without this the reach comes entirely from straightening the elbow, and a punch that
+        /// extends from the elbow outward is the "arms only" look however much the torso twists
+        /// behind it. The shoulder is the last link of foot -> knee -> hip -> torso -> shoulder ->
+        /// arm, and it is the one the clip is least likely to have aimed where we need it.
+        ///
+        /// Partial on purpose: all the way and the shoulder dislocates past what the mesh skins.
+        [Range(0f, 1f)] public float ShoulderDrive = 0.35f;
+
         [Header("Blend")]
         public float BlendSpeed = 9f;
         /// Releasing an arm to throw is much faster than bringing it home: a punch cannot wait for
@@ -69,6 +80,8 @@ namespace TheFighter
         bool _resolved;
         FighterAnimation _animation;
         Transform _head;
+        Transform _leftShoulder;
+        Transform _rightShoulder;
         Transform _leftUpper;
         Transform _leftLower;
         Transform _leftHand;
@@ -91,6 +104,9 @@ namespace TheFighter
 
             _animation = GetComponent<FighterAnimation>();
             _head = ModelAnimator.GetBoneTransform(HumanBodyBones.Head);
+            // Optional in a Humanoid rig, so everything downstream tolerates null.
+            _leftShoulder = ModelAnimator.GetBoneTransform(HumanBodyBones.LeftShoulder);
+            _rightShoulder = ModelAnimator.GetBoneTransform(HumanBodyBones.RightShoulder);
             _leftUpper = ModelAnimator.GetBoneTransform(HumanBodyBones.LeftUpperArm);
             _leftLower = ModelAnimator.GetBoneTransform(HumanBodyBones.LeftLowerArm);
             _leftHand = ModelAnimator.GetBoneTransform(HumanBodyBones.LeftHand);
@@ -161,6 +177,12 @@ namespace TheFighter
                 // The throwing arm is aimed, not guarded, so its guard weight bleeds away rather
                 // than snapping - otherwise the next punch would start from a half-blended pose.
                 weight = Mathf.MoveTowards(weight, 0f, ReleaseSpeed * Time.deltaTime);
+
+                // Shoulder first, so the arm is then solved from where the body put it. Solving
+                // the arm and then turning the shoulder would drag the hand back off target.
+                Transform shoulder = left ? _leftShoulder : _rightShoulder;
+                DriveShoulder(shoulder, hand, AimTarget(upper.position), aim * ShoulderDrive);
+
                 TwoBoneIk.Solve(upper, lower, hand, AimTarget(upper.position),
                     HintFor(PunchElbowHint, side), aim);
                 return;
@@ -175,6 +197,27 @@ namespace TheFighter
                 TwoBoneIk.Solve(upper, lower, hand, GuardTarget(left),
                     HintFor(GuardElbowHint, side), weight);
             }
+        }
+
+        /// Turns the shoulder a fraction of the way toward the target, so the reach starts at the
+        /// body rather than at the elbow.
+        void DriveShoulder(Transform shoulder, Transform hand, Vector3 target, float weight)
+        {
+            if (shoulder == null || weight <= 0.001f)
+            {
+                return;
+            }
+
+            Vector3 from = hand.position - shoulder.position;
+            Vector3 to = target - shoulder.position;
+            if (from.sqrMagnitude < 0.000001f || to.sqrMagnitude < 0.000001f)
+            {
+                return;
+            }
+
+            Quaternion before = shoulder.rotation;
+            shoulder.rotation = Quaternion.Slerp(before,
+                Quaternion.FromToRotation(from, to) * before, weight);
         }
 
         Vector3 HintFor(Vector3 hint, float side)

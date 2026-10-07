@@ -26,6 +26,14 @@ namespace TheFighter
         /// code owns punch timing. For footwork this scales a rate that already tracks how fast
         /// the fighter is actually travelling. 0 reads as 1.
         public float Speed = 1f;
+
+        /// Routes this clip to the full-body layer instead of the masked upper-body one.
+        ///
+        /// **Costs the crouch.** A full-body punch overrides the legs, so it cannot be thrown from
+        /// a low stance without standing the fighter up - which is the thing this project treats
+        /// as broken. Only worth it for a clip whose leg drive really is the punch (a deep
+        /// uppercut off the back foot), and only after watching it from a crouch.
+        public bool FullBody;
     }
 
     /// The clips, in one place. Lives on BoxingBootstrap so both fighters share a single set you
@@ -446,7 +454,10 @@ namespace TheFighter
                 {
                     continue;
                 }
-                into.Add(Append(variants[i], layer, false));
+
+                // Down is already full body; a punch gets there only by opting in.
+                Layer actual = variants[i].FullBody ? Layer.Full : layer;
+                into.Add(Append(variants[i], actual, false));
             }
         }
 
@@ -506,9 +517,15 @@ namespace TheFighter
             if (upper >= 0) { _entries[upper].Target = 1f; }
             if (full >= 0) { _entries[full].Target = 1f; }
 
-            _upperWeight = Mathf.MoveTowards(_upperWeight, upper >= 0 ? 1f : 0f,
+            // A punch that opted into FullBody lands on the full layer, so the layer a frame's
+            // action belongs to is read off the entry rather than assumed from which resolver
+            // produced it.
+            bool upperActive = upper >= 0 && _entries[upper].Layer == Layer.Upper;
+            bool fullActive = full >= 0 || (upper >= 0 && _entries[upper].Layer == Layer.Full);
+
+            _upperWeight = Mathf.MoveTowards(_upperWeight, upperActive ? 1f : 0f,
                 ActionBlendSpeed * dt);
-            _fullWeight = Mathf.MoveTowards(_fullWeight, full >= 0 ? 1f : 0f,
+            _fullWeight = Mathf.MoveTowards(_fullWeight, fullActive ? 1f : 0f,
                 ActionBlendSpeed * dt);
 
             Commit(dt);

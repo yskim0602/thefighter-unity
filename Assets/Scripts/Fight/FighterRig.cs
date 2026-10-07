@@ -93,6 +93,23 @@ namespace TheFighter
         /// those yet, so procedural motion is the only thing covering them.
         [Range(0f, 1f)] public float ProceduralMotionWeight = 1f;
 
+        /// Weight transfer, kept on a separate dial and **never turned off**.
+        ///
+        /// This is the one piece of procedural body motion no clip can replace, because it has to
+        /// happen on *our* punch timing rather than the clip's. It used to ride on
+        /// ProceduralMotionWeight along with the idle bob - which Bootstrap sets to 0 as soon as a
+        /// real model is in - so with a model the lunge, the hip rotation and the lean were all
+        /// multiplied by zero and every punch was arms only. That is exactly the "arms move but
+        /// the body does not shift its weight" failure, and it was a stray multiplication.
+        ///
+        /// A clip can supply the shape of a punch. Only this can supply the drive, because only
+        /// this knows when the fist is meant to arrive.
+        [Range(0f, 1f)] public float WeightTransferWeight = 1f;
+
+        /// How much of the punch's drive is in play right now, 0 to 1. PostureProbe reads it to
+        /// tell "no weight transfer" apart from "weight transfer you cannot see".
+        public float Commitment { get; private set; }
+
         [Header("Head movement")]
         /// Not scaled by ProceduralMotionWeight: there are no lean or duck clips, so this is the
         /// only thing showing the player that their head actually moved.
@@ -454,8 +471,11 @@ namespace TheFighter
                 * Mathf.Lerp(IdleBobHeight, MoveBobHeight, effort) * procedural;
 
             // Roll into the circle, lean into a step forward.
-            angles.z -= move.x * WeightShiftDegrees * procedural;
-            angles.x += move.y * 2f * procedural;
+            // Rolling into a circle and leaning into a step are weight, not decoration, so they
+            // stay with the transfer dial rather than the cosmetic one.
+            float transfer = WeightTransferWeight;
+            angles.z -= move.x * WeightShiftDegrees * transfer;
+            angles.x += move.y * 2f * transfer;
 
             PunchDefinition punch = Owner.ActivePunch;
             if (punch != null)
@@ -465,9 +485,19 @@ namespace TheFighter
                     - Mathf.Clamp01(-Owner.PunchTrack / CombatTuning.PunchLoadTrack) * 0.6f;
                 float sign = SideSign(Owner.ActiveHand);
 
-                position.z += commit * PunchLunge * procedural;
-                angles.y -= sign * commit * PunchTorsoYaw * procedural;
-                angles.x += (commit * PunchLean - punch.RiseArc * commit * 7f) * procedural;
+                Commitment = commit;
+
+                // The chain the punch is supposed to travel: the body drives forward, the hips and
+                // torso turn into it, and the shoulder follows. Multiplied by the transfer dial,
+                // which is never zero - a punch with no body behind it is the thing this project
+                // treats as broken.
+                position.z += commit * PunchLunge * transfer;
+                angles.y -= sign * commit * PunchTorsoYaw * transfer;
+                angles.x += (commit * PunchLean - punch.RiseArc * commit * 7f) * transfer;
+            }
+            else
+            {
+                Commitment = 0f;
             }
 
             if (Owner.State == ActionState.Staggered)
