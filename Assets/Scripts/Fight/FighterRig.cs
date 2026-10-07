@@ -195,7 +195,10 @@ namespace TheFighter
             get { return Owner == null || Owner.CurrentStance == Stance.Orthodox; }
         }
 
-        bool IsLeftHand(HandRole role)
+        /// Public because GuardPose needs to know which arm is throwing: the off-hand stays home
+        /// while the other one goes, and that single detail is most of what separates a boxer from
+        /// somebody swinging.
+        public bool IsLeftHand(HandRole role)
         {
             return role == HandRole.Lead ? LeadIsLeftHand : !LeadIsLeftHand;
         }

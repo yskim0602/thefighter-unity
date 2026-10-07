@@ -23,8 +23,8 @@ namespace TheFighter
         public Vector2 Window = Vector2.zero;
 
         /// Playback rate, for looping slots only - an action's rate comes from the fight, since
-        /// code owns punch timing. Raise it if a step cycle drags behind the feet, lower it if the
-        /// legs scissor faster than the fighter travels. 0 reads as 1.
+        /// code owns punch timing. For footwork this scales a rate that already tracks how fast
+        /// the fighter is actually travelling. 0 reads as 1.
         public float Speed = 1f;
     }
 
@@ -89,22 +89,32 @@ namespace TheFighter
 
     /// Plays Humanoid clips on a real model without an Animator Controller.
     ///
-    /// Three reasons it is built this way:
+    /// **Three layers, not one clip.** This is the difference between a fighter and a mannequin
+    /// playing animations. A boxer's feet never stop: he steps while he jabs, and the jab is his
+    /// arms and torso over footwork that is still happening. Playing one clip over the whole body
+    /// means every punch freezes the legs mid-stride and the fighter slides across the canvas on
+    /// still feet - which no amount of better clips can fix, because the problem is that the legs
+    /// are being told to stop.
     ///
-    /// 1. **Code owns the timing.** Every clip's time is set explicitly each frame - punches from
-    ///    Fighter.PunchProgress, stance and footwork from an accumulated loop clock. Mixamo clip
-    ///    lengths have nothing to do with our windup/strike/recovery numbers, and if the clips
-    ///    drove the timing then every range, counter window and scorecard weight would shift.
-    ///    This way the animation follows the fight instead of dictating it, and no clip needs its
-    ///    Loop Time or length touched on import.
+    ///   layer 0  stance and footwork, full body, always running
+    ///   layer 1  punches and slips, masked to the upper body - legs keep working underneath
+    ///   layer 2  knockdowns, full body, overrides everything
     ///
-    /// 2. **No state machine to hand-author.** A controller graph with a dozen states and
-    ///    transitions is tedious to build in the editor and impossible to review as a diff. Drag
-    ///    clips into the slots and that is the whole setup.
+    /// The mask is built in code, so there is no .mask asset to author in the editor.
     ///
-    /// 3. **It fails soft.** Empty slots are skipped, and if nothing is assigned or the graph
-    ///    cannot be built, this component does nothing at all and the procedural capsule rig keeps
-    ///    running. An animation bug must never cost us a playable fight.
+    /// Beyond that:
+    ///
+    /// - **Code owns the timing.** Clip times are set explicitly each frame - punches from
+    ///   Fighter.PunchProgress, footwork from distance actually travelled. Mixamo clip lengths
+    ///   have nothing to do with our windup/strike/recovery numbers, and if the clips drove the
+    ///   timing then every range, counter window and scorecard weight would shift. No clip needs
+    ///   its Loop Time or length touched on import.
+    ///
+    /// - **No state machine to hand-author.** Drag clips into the slots and that is the setup.
+    ///
+    /// - **It fails soft.** Empty slots are skipped, and if nothing is assigned or the graph
+    ///   cannot be built this component does nothing and the procedural capsule rig keeps running.
+    ///   An animation bug must never cost us a playable fight.
     public class FighterAnimation : MonoBehaviour
     {
         public Fighter Owner;
@@ -118,17 +128,35 @@ namespace TheFighter
         public BoxerClipSet OrthodoxClips;
         public BoxerClipSet SouthpawClips;
 
+        [Header("Upper-body layer")]
+        /// Off, punches play over the whole body and the legs stop dead on every shot. Only worth
+        /// turning off to see the difference.
+        public bool MaskPunchesToUpperBody = true;
+        /// The torso is left to the punch so the shot carries hip rotation - most of what makes a
+        /// punch look like it has weight behind it. The cost is that the punch clip also drives
+        /// hip *height*, which is what HipHeightLock then cancels.
+        public bool PunchDrivesTorso = true;
+
+        [Header("Footwork")]
+        /// Footwork clips advance with the ground actually covered rather than on their own timer.
+        /// A stride cycle running at a fixed rate under a body moving at a different speed is
+        /// exactly what reads as ice-skating, and no clip is immune to it.
+        public bool SyncStrideToSpeed = true;
+        /// Playback rate at a standstill and at full speed. Never zero: feet that stop completely
+        /// look broken, and a boxer is always shifting weight.
+        public float StrideRateIdle = 0.55f;
+        public float StrideRateFull = 1.35f;
+
         [Header("Hip height")]
         /// Mixamo clips disagree about how high the hips sit, because each one's Root Transform
         /// Position (Y) is measured from a different reference. Blending from idle into a punch
         /// then pops the whole body upward, which reads as the fighter hopping on every shot.
         ///
-        /// So the hips are pinned to the height idle puts them at - but **only while an action is
-        /// playing**, scaled by that action's weight. Pinning them the whole time would also
-        /// cancel the vertical bob inside the idle and step cycles, and that bob is most of what
-        /// makes a stance look alive and a step look like weight transferring. The proper fix is
-        /// still per-clip import settings (Root Transform Position (Y), Bake Into Pose, Based Upon
-        /// Feet), one clip at a time; this is the one-checkbox version.
+        /// So the hips are pinned to the height the stance puts them at - but **only while an
+        /// action is playing**, scaled by that action's weight. Pinning them the whole time would
+        /// also cancel the vertical bob inside the idle and step cycles, and that bob is most of
+        /// what makes a stance look alive and a step look like weight transferring. The reference
+        /// height is learned from the stance rather than sampled on frame one.
         ///
         /// Measured against the model's own transform, so leaning, ducking and the knockdown pose
         /// (which all live above it) still work.
@@ -157,14 +185,28 @@ namespace TheFighter
             Count
         }
 
+        enum Layer
+        {
+            /// Stance and footwork. Full body, never stops.
+            Base = 0,
+            /// Punches and slips. Masked to the upper body.
+            Upper = 1,
+            /// Knockdowns. Full body, over the top.
+            Full = 2
+        }
+
         class Entry
         {
             public AnimationClip Clip;
+            public Layer Layer;
             public float Start;
             public float End;
             public float Speed;
             public bool Looping;
+            /// Footwork, as opposed to the stance loops - only these follow the ground covered.
+            public bool Striding;
             public AnimationClipPlayable Playable;
+            public int Port;
             public float Length;
             public float Target;
             public float Weight;
@@ -172,12 +214,14 @@ namespace TheFighter
 
         BoxerClipSet _clips;
         PlayableGraph _graph;
-        AnimationMixerPlayable _mixer;
+        AnimationLayerMixerPlayable _layers;
+        readonly AnimationMixerPlayable[] _mixers = new AnimationMixerPlayable[3];
         readonly List<Entry> _entries = new List<Entry>();
         readonly int[] _poses = new int[(int)Pose.Count];
         readonly List<int>[] _punches = new List<int>[4];
         readonly List<int> _slip = new List<int>();
         readonly List<int> _down = new List<int>();
+        AvatarMask _upperMask;
         bool _built;
 
         /// GuardPose reads this and stands down: if a guard clip exists, IK gloves fighting an
@@ -187,12 +231,14 @@ namespace TheFighter
         Transform _hips;
         float _hipHeight;
         bool _hipCaptured;
-        float _actionWeight;
 
-        float _baseClock;
+        float _stanceClock;
+        float _strideClock;
         float _slipClock;
         float _downClock;
         float _guardBlend;
+        float _upperWeight;
+        float _fullWeight;
 
         PunchKind _lastKind;
         bool _punchWasActive;
@@ -218,6 +264,10 @@ namespace TheFighter
             if (_graph.IsValid())
             {
                 _graph.Destroy();
+            }
+            if (_upperMask != null)
+            {
+                Destroy(_upperMask);
             }
         }
 
@@ -250,22 +300,22 @@ namespace TheFighter
             // A loop keeps one variant for the whole fight - swapping idles mid-round would pop.
             // Rolling it per fighter instead means the two boxers often stand differently, which
             // is free characterisation.
-            _poses[(int)Pose.Idle] = AddLoop(_clips.Idle);
-            _poses[(int)Pose.Guard] = AddLoop(_clips.Guard);
-            _poses[(int)Pose.StepForward] = AddLoop(_clips.StepForward);
-            _poses[(int)Pose.StepBack] = AddLoop(_clips.StepBack);
-            _poses[(int)Pose.StepLeft] = AddLoop(_clips.StepLeft);
-            _poses[(int)Pose.StepRight] = AddLoop(_clips.StepRight);
+            _poses[(int)Pose.Idle] = AddLoop(_clips.Idle, false);
+            _poses[(int)Pose.Guard] = AddLoop(_clips.Guard, false);
+            _poses[(int)Pose.StepForward] = AddLoop(_clips.StepForward, true);
+            _poses[(int)Pose.StepBack] = AddLoop(_clips.StepBack, true);
+            _poses[(int)Pose.StepLeft] = AddLoop(_clips.StepLeft, true);
+            _poses[(int)Pose.StepRight] = AddLoop(_clips.StepRight, true);
 
             GuardClipAssigned = _poses[(int)Pose.Guard] >= 0;
 
             for (int i = 0; i < PunchLibrary.All.Length; i++)
             {
                 PunchKind kind = PunchLibrary.All[i];
-                AddVariants(_clips.PunchVariants(kind), _punches[(int)kind], false);
+                AddVariants(_clips.PunchVariants(kind), _punches[(int)kind], Layer.Upper);
             }
-            AddVariants(_clips.Slip, _slip, false);
-            AddVariants(_clips.Down, _down, false);
+            AddVariants(_clips.Slip, _slip, Layer.Upper);
+            AddVariants(_clips.Down, _down, Layer.Full);
 
             if (_entries.Count == 0)
             {
@@ -278,9 +328,26 @@ namespace TheFighter
 
             _graph = PlayableGraph.Create("FighterAnimation:" + Owner.FighterName);
             AnimationPlayableOutput output = AnimationPlayableOutput.Create(_graph, "Pose", ModelAnimator);
-            _mixer = AnimationMixerPlayable.Create(_graph, _entries.Count, true);
-            output.SetSourcePlayable(_mixer);
 
+            _layers = AnimationLayerMixerPlayable.Create(_graph, _mixers.Length);
+            output.SetSourcePlayable(_layers);
+
+            for (int layer = 0; layer < _mixers.Length; layer++)
+            {
+                int count = CountOn((Layer)layer);
+                _mixers[layer] = AnimationMixerPlayable.Create(_graph, Mathf.Max(1, count), true);
+                _graph.Connect(_mixers[layer], 0, _layers, layer);
+                _layers.SetLayerAdditive((uint)layer, false);
+                _layers.SetInputWeight(layer, layer == 0 ? 1f : 0f);
+            }
+
+            if (MaskPunchesToUpperBody)
+            {
+                _upperMask = BuildUpperBodyMask();
+                _layers.SetLayerMaskFromAvatarMask((uint)Layer.Upper, _upperMask);
+            }
+
+            int[] ports = new int[_mixers.Length];
             for (int i = 0; i < _entries.Count; i++)
             {
                 Entry entry = _entries[i];
@@ -289,8 +356,10 @@ namespace TheFighter
                 // Paused, because we scrub the time ourselves every frame.
                 playable.Pause();
 
-                _graph.Connect(playable, 0, _mixer, i);
-                _mixer.SetInputWeight(i, 0f);
+                int layer = (int)entry.Layer;
+                entry.Port = ports[layer]++;
+                _graph.Connect(playable, 0, _mixers[layer], entry.Port);
+                _mixers[layer].SetInputWeight(entry.Port, 0f);
 
                 entry.Playable = playable;
                 entry.Length = Mathf.Max(0.01f, entry.Clip.length);
@@ -300,26 +369,49 @@ namespace TheFighter
             _built = true;
         }
 
-        /// Adds one randomly chosen variant from a looping slot, and returns its index.
-        int AddLoop(ClipVariant[] variants)
+        int CountOn(Layer layer)
         {
-            List<int> added = new List<int>();
-            AddVariants(variants, added, true);
-            return added.Count > 0 ? added[0] : -1;
+            int count = 0;
+            for (int i = 0; i < _entries.Count; i++)
+            {
+                if (_entries[i].Layer == layer) { count++; }
+            }
+            return count;
         }
 
-        void AddVariants(ClipVariant[] variants, List<int> into, bool pickOne)
+        /// The mask that lets the legs carry on. Built in code rather than as a .mask asset, so
+        /// there is nothing to author in the editor and nothing to forget to assign.
+        AvatarMask BuildUpperBodyMask()
         {
-            if (variants == null)
+            AvatarMask mask = new AvatarMask();
+
+            for (int i = 0; i < (int)AvatarMaskBodyPart.LastBodyPart; i++)
             {
-                return;
+                mask.SetHumanoidBodyPartActive((AvatarMaskBodyPart)i, true);
             }
 
-            if (pickOne)
+            // The legs and the root belong to the base layer. That is the whole point: footwork
+            // keeps running under the punch, and position stays with the motor.
+            mask.SetHumanoidBodyPartActive(AvatarMaskBodyPart.Root, false);
+            mask.SetHumanoidBodyPartActive(AvatarMaskBodyPart.LeftLeg, false);
+            mask.SetHumanoidBodyPartActive(AvatarMaskBodyPart.RightLeg, false);
+            mask.SetHumanoidBodyPartActive(AvatarMaskBodyPart.LeftFootIK, false);
+            mask.SetHumanoidBodyPartActive(AvatarMaskBodyPart.RightFootIK, false);
+
+            if (!PunchDrivesTorso)
             {
-                // Collect the assigned ones first, so an empty slot in the middle of the array
-                // does not skew the roll toward whatever follows it.
-                List<ClipVariant> usable = new List<ClipVariant>();
+                mask.SetHumanoidBodyPartActive(AvatarMaskBodyPart.Body, false);
+            }
+
+            return mask;
+        }
+
+        /// Adds one randomly chosen variant from a looping slot, and returns its index.
+        int AddLoop(ClipVariant[] variants, bool striding)
+        {
+            List<ClipVariant> usable = new List<ClipVariant>();
+            if (variants != null)
+            {
                 for (int i = 0; i < variants.Length; i++)
                 {
                     if (variants[i] != null && variants[i].Clip != null)
@@ -327,11 +419,24 @@ namespace TheFighter
                         usable.Add(variants[i]);
                     }
                 }
-                if (usable.Count == 0)
-                {
-                    return;
-                }
-                into.Add(Append(usable[Random.Range(0, usable.Count)], true));
+            }
+
+            if (usable.Count == 0)
+            {
+                return -1;
+            }
+
+            // Collected first so an empty slot in the middle of the array does not skew the roll
+            // toward whatever follows it.
+            int index = Append(usable[Random.Range(0, usable.Count)], Layer.Base, true);
+            _entries[index].Striding = striding;
+            return index;
+        }
+
+        void AddVariants(ClipVariant[] variants, List<int> into, Layer layer)
+        {
+            if (variants == null)
+            {
                 return;
             }
 
@@ -341,14 +446,15 @@ namespace TheFighter
                 {
                     continue;
                 }
-                into.Add(Append(variants[i], false));
+                into.Add(Append(variants[i], layer, false));
             }
         }
 
-        int Append(ClipVariant variant, bool looping)
+        int Append(ClipVariant variant, Layer layer, bool looping)
         {
             Entry entry = new Entry();
             entry.Clip = variant.Clip;
+            entry.Layer = layer;
             entry.Looping = looping;
 
             // Unity fills a freshly grown array element with zeroes, so a window that has not been
@@ -383,49 +489,74 @@ namespace TheFighter
             StabiliseHipHeight();
 
             float dt = Time.deltaTime;
-            _baseClock += dt;
 
             for (int i = 0; i < _entries.Count; i++)
             {
-                Entry entry = _entries[i];
-                entry.Target = 0f;
-
-                // Loops advance whatever their weight, so a clip fading out keeps moving instead
-                // of freezing mid-fade. Half of what makes a blend look wrong is a frozen pose.
-                if (entry.Looping)
-                {
-                    float span = (entry.End - entry.Start) * entry.Length;
-                    entry.Playable.SetTime(span > 0.0001f
-                        ? entry.Start * entry.Length + Mathf.Repeat(_baseClock * entry.Speed, span)
-                        : entry.Start * entry.Length);
-                }
+                _entries[i].Target = 0f;
             }
 
-            int action = ResolveAction(dt);
-            if (action >= 0)
-            {
-                _entries[action].Target = 1f;
-            }
-            else
-            {
-                ApplyStanceAndFootwork(dt);
-            }
+            // The base layer runs every frame, punch or no punch. That is what keeps the feet
+            // alive underneath a shot instead of parking them for its duration.
+            ApplyStanceAndFootwork(dt);
+            AdvanceLoops(dt);
+
+            int upper = ResolveUpperAction(dt);
+            int full = ResolveFullAction(dt);
+
+            if (upper >= 0) { _entries[upper].Target = 1f; }
+            if (full >= 0) { _entries[full].Target = 1f; }
+
+            _upperWeight = Mathf.MoveTowards(_upperWeight, upper >= 0 ? 1f : 0f,
+                ActionBlendSpeed * dt);
+            _fullWeight = Mathf.MoveTowards(_fullWeight, full >= 0 ? 1f : 0f,
+                ActionBlendSpeed * dt);
 
             Commit(dt);
         }
 
-        /// Returns the entry to play as a one-shot this frame, or -1 for none.
-        int ResolveAction(float deltaTime)
+        /// Loops advance whatever their weight, so a clip fading out keeps moving instead of
+        /// freezing mid-fade - half of what makes a blend look wrong is a frozen pose.
+        void AdvanceLoops(float deltaTime)
+        {
+            _stanceClock += deltaTime;
+            _strideClock += deltaTime * _strideRate;
+
+            for (int i = 0; i < _entries.Count; i++)
+            {
+                Entry entry = _entries[i];
+                if (!entry.Looping)
+                {
+                    continue;
+                }
+
+                float span = (entry.End - entry.Start) * entry.Length;
+                if (span <= 0.0001f)
+                {
+                    entry.Playable.SetTime(entry.Start * entry.Length);
+                    continue;
+                }
+
+                float clock = entry.Striding ? _strideClock : _stanceClock;
+                entry.Playable.SetTime(entry.Start * entry.Length
+                    + Mathf.Repeat(clock * entry.Speed, span));
+            }
+        }
+
+        float _strideRate = 1f;
+
+        // ------------------------------------------------------------------
+
+        /// Punches and slips: the upper-body layer.
+        int ResolveUpperAction(float deltaTime)
         {
             if (Owner.State == ActionState.Down || Owner.State == ActionState.KnockedOut)
             {
-                _downClock += deltaTime;
-                int entry = Pick(_down, ref _downVariant, _downClock > deltaTime);
-                return Scrub(entry, entry >= 0 ? _downClock / _entries[entry].Length : 0f);
+                _punchWasActive = false;
+                _punchVariant = -1;
+                _slipClock = 0f;
+                _slipVariant = -1;
+                return -1;
             }
-
-            _downClock = 0f;
-            _downVariant = -1;
 
             PunchDefinition punch = Owner.ActivePunch;
             if (punch != null)
@@ -456,6 +587,21 @@ namespace TheFighter
             _slipClock = 0f;
             _slipVariant = -1;
             return -1;
+        }
+
+        /// Knockdowns: full body, over the top of everything.
+        int ResolveFullAction(float deltaTime)
+        {
+            if (Owner.State != ActionState.Down && Owner.State != ActionState.KnockedOut)
+            {
+                _downClock = 0f;
+                _downVariant = -1;
+                return -1;
+            }
+
+            _downClock += deltaTime;
+            int entry = Pick(_down, ref _downVariant, _downClock > deltaTime);
+            return Scrub(entry, entry >= 0 ? _downClock / _entries[entry].Length : 0f);
         }
 
         /// Holds onto the variant already in play, or rolls a new one.
@@ -498,6 +644,12 @@ namespace TheFighter
                 move = Owner.Motor.LocalMove / Mathf.Max(0.1f, Owner.Stats.MoveSpeed);
                 move = Vector2.ClampMagnitude(move, 1f);
             }
+
+            // Stride rate from ground actually covered. A cycle running on its own timer under a
+            // body travelling at a different speed is what reads as ice-skating, whatever the clip.
+            _strideRate = SyncStrideToSpeed
+                ? Mathf.Lerp(StrideRateIdle, StrideRateFull, move.magnitude)
+                : 1f;
 
             bool guarding = Owner.IsGuarding && !Owner.GuardBroken;
             _guardBlend = Mathf.MoveTowards(_guardBlend, guarding ? 1f : 0f, StanceBlendSpeed * deltaTime);
@@ -575,36 +727,36 @@ namespace TheFighter
 
         void Commit(float deltaTime)
         {
-            float total = 0f;
-            float actions = 0f;
+            float baseTotal = 0f;
 
             for (int i = 0; i < _entries.Count; i++)
             {
                 Entry entry = _entries[i];
                 float speed = entry.Looping ? StanceBlendSpeed : ActionBlendSpeed;
                 entry.Weight = Mathf.MoveTowards(entry.Weight, entry.Target, speed * deltaTime);
-                total += entry.Weight;
 
-                if (!entry.Looping)
+                if (entry.Layer == Layer.Base)
                 {
-                    actions += entry.Weight;
+                    baseTotal += entry.Weight;
                 }
             }
 
-            // Never leave the mixer empty: an unweighted Humanoid snaps to T-pose.
+            // Never leave the base layer empty: an unweighted Humanoid snaps to T-pose.
             int idle = _poses[(int)Pose.Idle];
-            if (total <= 0.0001f && idle >= 0)
+            if (baseTotal <= 0.0001f && idle >= 0)
             {
                 _entries[idle].Weight = 1f;
-                total = 1f;
             }
-
-            _actionWeight = total > 0.0001f ? Mathf.Clamp01(actions / total) : 0f;
 
             for (int i = 0; i < _entries.Count; i++)
             {
-                _mixer.SetInputWeight(i, _entries[i].Weight);
+                Entry entry = _entries[i];
+                _mixers[(int)entry.Layer].SetInputWeight(entry.Port, entry.Weight);
             }
+
+            _layers.SetInputWeight((int)Layer.Base, 1f);
+            _layers.SetInputWeight((int)Layer.Upper, _upperWeight);
+            _layers.SetInputWeight((int)Layer.Full, _fullWeight);
         }
 
         /// Pulls the hips back to the height the stance sits at, in proportion to how much of the
@@ -632,7 +784,8 @@ namespace TheFighter
             // Learn the resting height from the stance itself, while nothing is distorting it. A
             // slow running average rather than one sample, so the idle bob averages out instead of
             // pinning the hips to wherever frame one happened to catch them.
-            if (_actionWeight < 0.01f)
+            float action = Mathf.Max(_upperWeight, _fullWeight);
+            if (action < 0.01f)
             {
                 _hipHeight = _hipCaptured
                     ? Mathf.Lerp(_hipHeight, local.y, 1f - Mathf.Exp(-0.8f * Time.deltaTime))
@@ -641,7 +794,7 @@ namespace TheFighter
                 return;
             }
 
-            float strength = HipHeightLock * _actionWeight;
+            float strength = HipHeightLock * action;
             if (!_hipCaptured || strength <= 0.001f)
             {
                 return;

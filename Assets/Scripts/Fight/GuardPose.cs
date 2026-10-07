@@ -39,13 +39,29 @@ namespace TheFighter
         public Vector3 ElbowHint = new Vector3(0.3f, -1f, -0.25f);
 
         [Header("Blend")]
+        /// How fast the hands come back to the cheeks.
         public float BlendSpeed = 9f;
+        /// How fast an arm is released to throw. Much faster: a punch cannot wait for the guard
+        /// to fade or it starts from the wrong place.
+        public float ReleaseSpeed = 40f;
         [Range(0f, 1f)] public float MaxWeight = 1f;
-        /// An animated guard and an IK guard fighting each other gives you neither, so if the clip
-        /// set has a Guard clip this layer gets out of the way. Clear that slot to use IK instead.
+
+        /// How much the hands are held at the cheeks even when the guard button is not down.
+        ///
+        /// This is the difference between a boxer and a mannequin holding a pose. Mixamo's
+        /// shadowbox clips rest the hands low and loose, so between punches the fighter stands
+        /// there with his chin out - and no clip fixes that, because the clip is where it comes
+        /// from. A partial pull home costs nothing and reads as somebody who has been taught to
+        /// keep his hands up.
+        [Range(0f, 1f)] public float IdleGuardWeight = 0.45f;
+
+        /// With a Guard clip assigned, an animated guard and a full IK guard fight each other and
+        /// you get neither - so the clip takes the active guard and this layer drops back to the
+        /// idle pull. Clear the Guard slot to hand the whole job to IK.
         public bool DeferToGuardClip = true;
 
-        float _weight;
+        float _leftWeight;
+        float _rightWeight;
         FighterAnimation _animation;
         bool _resolved;
         Transform _head;
@@ -88,23 +104,47 @@ namespace TheFighter
 
             Resolve();
 
-            bool guarding = Owner.IsGuarding && !Owner.GuardBroken
-                && Owner.State != ActionState.Down && Owner.State != ActionState.KnockedOut;
+            bool floored = Owner.State == ActionState.Down || Owner.State == ActionState.KnockedOut;
+            bool guarding = Owner.IsGuarding && !Owner.GuardBroken && !floored;
 
-            if (DeferToGuardClip && _animation != null && _animation.GuardClipAssigned)
+            if (guarding && DeferToGuardClip && _animation != null && _animation.GuardClipAssigned)
             {
                 guarding = false;
             }
 
-            _weight = Mathf.MoveTowards(_weight, guarding ? MaxWeight : 0f, BlendSpeed * Time.deltaTime);
+            float target = floored ? 0f : (guarding ? MaxWeight : IdleGuardWeight);
 
-            if (_weight <= 0.001f || _head == null)
+            // The arm that is throwing has to be free; the other one stays home.
+            bool punching = Owner.ActivePunch != null && !floored;
+            bool leftThrowing = punching && Owner.Rig != null && Owner.Rig.IsLeftHand(Owner.ActiveHand);
+
+            float leftTarget = punching && leftThrowing ? 0f : target;
+            float rightTarget = punching && !leftThrowing ? 0f : target;
+
+            _leftWeight = Step(_leftWeight, leftTarget);
+            _rightWeight = Step(_rightWeight, rightTarget);
+
+            if (_head == null)
             {
                 return;
             }
 
-            SolveArm(_leftUpper, _leftLower, _leftHand, TargetFor(true), -1f);
-            SolveArm(_rightUpper, _rightLower, _rightHand, TargetFor(false), 1f);
+            if (_leftWeight > 0.001f)
+            {
+                SolveArm(_leftUpper, _leftLower, _leftHand, TargetFor(true), -1f, _leftWeight);
+            }
+            if (_rightWeight > 0.001f)
+            {
+                SolveArm(_rightUpper, _rightLower, _rightHand, TargetFor(false), 1f, _rightWeight);
+            }
+        }
+
+        /// Releasing is fast and returning is not, so a punch is never held up by its own guard
+        /// fading out.
+        float Step(float current, float target)
+        {
+            float speed = target < current ? ReleaseSpeed : BlendSpeed;
+            return Mathf.MoveTowards(current, target, speed * Time.deltaTime);
         }
 
         Vector3 TargetFor(bool left)
@@ -119,7 +159,8 @@ namespace TheFighter
                 + root.forward * forward;
         }
 
-        void SolveArm(Transform upper, Transform lower, Transform hand, Vector3 target, float side)
+        void SolveArm(Transform upper, Transform lower, Transform hand, Vector3 target, float side,
+            float weight)
         {
             if (upper == null || lower == null || hand == null)
             {
@@ -198,8 +239,8 @@ namespace TheFighter
             Quaternion lowerSolved = Quaternion.FromToRotation(hand.position - lower.position,
                 reachable - lower.position) * lower.rotation;
 
-            upper.rotation = Quaternion.Slerp(upperBefore, upperSolved, _weight);
-            lower.rotation = Quaternion.Slerp(lowerBefore, lowerSolved, _weight);
+            upper.rotation = Quaternion.Slerp(upperBefore, upperSolved, weight);
+            lower.rotation = Quaternion.Slerp(lowerBefore, lowerSolved, weight);
         }
     }
 }
