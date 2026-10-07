@@ -13,13 +13,17 @@ namespace TheFighter
     {
         public AnimationClip Clip;
 
-        /// Which slice of the clip to use, 0 to 1. **Leave both at 0 for the whole clip.**
+        /// Which slice of the clip to use, 0 to 1. **Leave both at 0 and it is worked out for
+        /// you**: the slice that plays at life speed inside the time the action actually has.
         ///
-        /// Mixamo clips are often longer than what we need, or are whole combos - "Body Jab Cross"
-        /// is a left jab then a right cross, so Jab takes 0 to 0.5 and Straight takes 0.45 to 1 of
-        /// the same file. Trim the end when an action looks frantic, or trim both ends of a loop
-        /// to cut a wind-up the clip opens with. The fight's timing never changes either way, only
-        /// which frames you see.
+        /// That is almost always what you want, and it used to mean "the whole clip" - which for
+        /// a Mixamo take is two to five times speed, a blur that happens to contain a punch. The
+        /// code already knew the right answer (it was printing it in the fit log for someone to
+        /// retype), so now it applies it.
+        ///
+        /// Set it by hand when the clip's useful part is not at the beginning. "Body Jab Cross" is
+        /// a left jab then a right cross, so Jab takes 0 to 0.5 and Straight 0.45 to 1 of the one
+        /// file. Loops are left whole, since a loop has no duration to fit.
         public Vector2 Window = Vector2.zero;
 
         /// Playback rate, for looping slots only - an action's rate comes from the fight, since
@@ -260,6 +264,8 @@ namespace TheFighter
             public Layer Layer;
             public HitDirection Direction;
             public HitSeverity Force;
+            /// Whether the window was worked out rather than typed, so the log can say which.
+            public bool AutoWindow;
             public float Start;
             public float End;
             public float Speed;
@@ -401,11 +407,13 @@ namespace TheFighter
             for (int i = 0; i < PunchLibrary.All.Length; i++)
             {
                 PunchKind kind = PunchLibrary.All[i];
-                AddVariants(_clips.PunchVariants(kind), _punches[(int)kind], Layer.Upper);
+                AddVariants(_clips.PunchVariants(kind), _punches[(int)kind], Layer.Upper,
+                    PunchLibrary.Get(kind).TotalTime, false);
             }
-            AddVariants(_clips.Slip, _slip, Layer.Upper);
-            AddVariants(_clips.HitHead, _hitHead, Layer.Upper);
-            AddVariants(_clips.HitBody, _hitBody, Layer.Upper);
+            AddVariants(_clips.Slip, _slip, Layer.Upper, CombatTuning.DodgeDuration, false);
+            AddVariants(_clips.HitHead, _hitHead, Layer.Upper, HitReactionSeconds, true);
+            AddVariants(_clips.HitBody, _hitBody, Layer.Upper, HitReactionSeconds, true);
+            // A knockdown runs on the clip's own length, so there is nothing to fit it to.
             AddVariants(_clips.Down, _down, Layer.Full);
 
             if (_entries.Count == 0)
@@ -453,7 +461,6 @@ namespace TheFighter
                 _mixers[layer].SetInputWeight(entry.Port, 0f);
 
                 entry.Playable = playable;
-                entry.Length = Mathf.Max(0.01f, entry.Clip.length);
             }
 
             _graph.Play();
@@ -509,10 +516,11 @@ namespace TheFighter
 
             if (anyTight)
             {
-                report.Append("\n  Set a flagged clip's Window to the \"1x would be\" numbers on "
-                    + "its line. TOO FAST is a blur; TOO SLOW is slow motion, which reads as the "
-                    + "punch having no weight. The fight's timing does not change either way - "
-                    + "only which frames you see.");
+                report.Append("\n  Every flagged clip has a Window typed into it. Clearing that "
+                    + "Window to 0,0 lets it be fitted automatically, which is what (auto) lines "
+                    + "already are. TOO FAST is a blur; TOO SLOW is slow motion, which reads as "
+                    + "the punch having no weight. Either way only which frames you see changes, "
+                    + "never the fight's timing.");
                 Debug.LogWarning(report.ToString());
             }
             else
@@ -585,7 +593,10 @@ namespace TheFighter
             return index;
         }
 
-        void AddVariants(ClipVariant[] variants, List<int> into, Layer layer)
+        /// fitDuration is how long the action gets, so an untouched window can be sized to it.
+        /// 0 means there is nothing to fit against - a loop.
+        void AddVariants(ClipVariant[] variants, List<int> into, Layer layer,
+            float fitDuration, bool scaleByForce)
         {
             if (variants == null)
             {
@@ -601,30 +612,28 @@ namespace TheFighter
 
                 // Down is already full body; a punch gets there only by opting in.
                 Layer actual = variants[i].FullBody ? Layer.Full : layer;
-                into.Add(Append(variants[i], actual, false));
+                into.Add(Append(variants[i], actual, false, fitDuration, scaleByForce));
             }
         }
 
+        void AddVariants(ClipVariant[] variants, List<int> into, Layer layer)
+        {
+            AddVariants(variants, into, layer, 0f, false);
+        }
+
         int Append(ClipVariant variant, Layer layer, bool looping)
+        {
+            return Append(variant, layer, looping, 0f, false);
+        }
+
+        int Append(ClipVariant variant, Layer layer, bool looping,
+            float fitDuration, bool scaleByForce)
         {
             Entry entry = new Entry();
             entry.Clip = variant.Clip;
             entry.Layer = layer;
             entry.Looping = looping;
-
-            // Unity fills a freshly grown array element with zeroes, so a window that has not been
-            // touched reads as "the whole clip" rather than as a zero-length slice that would
-            // freeze the clip on frame one. Same for Speed.
-            float a = Mathf.Clamp01(Mathf.Min(variant.Window.x, variant.Window.y));
-            float b = Mathf.Clamp01(Mathf.Max(variant.Window.x, variant.Window.y));
-            if (b - a < 0.01f)
-            {
-                a = 0f;
-                b = 1f;
-            }
-            entry.Start = a;
-            entry.End = b;
-            entry.Speed = variant.Speed <= 0.0001f ? 1f : variant.Speed;
+            entry.Length = Mathf.Max(0.01f, variant.Clip.length);
             // Tagged by hand if you tagged it; read off the file name if you did not. Mixamo
             // already says it - "Standing React Large From Left" is a direction and a severity in
             // the name - and asking somebody to retype that into two dropdowns per clip, for
@@ -634,6 +643,24 @@ namespace TheFighter
                 ? variant.Direction : DirectionFromName(entry.Clip.name);
             entry.Force = variant.Force != HitSeverity.Any
                 ? variant.Force : ForceFromName(entry.Clip.name);
+
+            // Unity fills a freshly grown array element with zeroes, so an untouched window is a
+            // degenerate one. That used to mean "the whole clip"; it now means "fit it".
+            float a = Mathf.Clamp01(Mathf.Min(variant.Window.x, variant.Window.y));
+            float b = Mathf.Clamp01(Mathf.Max(variant.Window.x, variant.Window.y));
+
+            if (b - a < 0.01f)
+            {
+                a = 0f;
+                float have = fitDuration
+                    * (scaleByForce && entry.Force == HitSeverity.Heavy ? HeavyHitScale : 1f);
+                b = have > 0f ? Mathf.Clamp(have / entry.Length, 0.05f, 1f) : 1f;
+                entry.AutoWindow = true;
+            }
+
+            entry.Start = a;
+            entry.End = b;
+            entry.Speed = variant.Speed <= 0.0001f ? 1f : variant.Speed;
 
             _entries.Add(entry);
             return _entries.Count - 1;
@@ -1201,18 +1228,15 @@ namespace TheFighter
                 .Append("  clip ").Append(entry.Length.ToString("0.00")).Append('s')
                 .Append("  window ").Append(entry.Start.ToString("0.00"))
                 .Append('-').Append(entry.End.ToString("0.00"))
-                .Append("  -> ").Append(rate.ToString("0.0")).Append('x')
-                .Append("   1x would be ").Append(entry.Start.ToString("0.00"))
-                .Append('-').Append(Mathf.Min(1f, entry.Start + ideal).ToString("0.00"));
+                .Append(entry.AutoWindow ? " (auto)" : " (set)")
+                .Append("  -> ").Append(rate.ToString("0.0")).Append('x');
 
-            if (rate > 1.8f)
+            if (rate > 1.8f || rate < 0.7f)
             {
-                report.Append("   TOO FAST");
-                return true;
-            }
-            if (rate < 0.7f)
-            {
-                report.Append("   TOO SLOW");
+                report.Append(rate > 1.8f ? "   TOO FAST" : "   TOO SLOW")
+                    .Append(" - clear the Window to 0,0 and it becomes ")
+                    .Append(entry.Start.ToString("0.00"))
+                    .Append('-').Append(Mathf.Min(1f, entry.Start + ideal).ToString("0.00"));
                 return true;
             }
 
