@@ -13,6 +13,11 @@ namespace TheFighter
         public bool Dodge;
         public bool ThrowPunch;
         public PunchKind Punch;
+        /// Which arm, for a punch that has one of each (hook, uppercut). A *side*, not a
+        /// Lead/Rear role, because this comes from a key the player associates with an arm -
+        /// and in southpaw the left hook is the rear hook. Auto leaves the choice to the fight,
+        /// which is what the AI and the touch pad use.
+        public ClipSide Hand;
         /// Throws the windup and nothing else. The hand never comes, so all it buys is whatever
         /// the other fighter does about it - which is the whole idea.
         public bool Feint;

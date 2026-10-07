@@ -719,7 +719,7 @@ namespace TheFighter
             // Combos have to flow. The second punch of a one-two starts before the first hand is
             // all the way back - but only with the *other* hand, so one glove cannot machine-gun,
             // and it costs extra gas. That one rule is what turns single punches into boxing.
-            HandRole hand = ResolveHand(punch);
+            HandRole hand = ResolveHand(punch, intent.Hand);
 
             // Compared against the hand actually in the air rather than the punch kind's default,
             // which now that a hook can come off either hand are not the same thing.
@@ -771,15 +771,21 @@ namespace TheFighter
 
         /// Which hand throws this one.
         ///
-        /// Fixed for a jab or a straight. A hook comes off whichever hand is free, so a
-        /// combination alternates the way a real one does - jab, right hook, left hook - and the
-        /// combo-cancel rule, which only lets the other hand interrupt, keeps letting it flow.
-        /// Thrown cold it is the lead hook, which is the one you lead with.
-        HandRole ResolveHand(PunchDefinition punch)
+        /// Fixed for a jab or a straight. For a hook or an uppercut the input decides, because
+        /// the player has a key per arm - and an explicit choice is never second-guessed, since
+        /// stopping the hand from alternating under their fingers is the only reason two keys
+        /// exist. Only when nobody asked (the AI, the touch pad) does it alternate on its own.
+        HandRole ResolveHand(PunchDefinition punch, ClipSide chosen)
         {
             if (!punch.EitherHand)
             {
                 return punch.Hand;
+            }
+
+            if (chosen != ClipSide.Auto && Rig != null)
+            {
+                bool wantLeft = chosen == ClipSide.Left;
+                return Rig.IsLeftHand(HandRole.Lead) == wantLeft ? HandRole.Lead : HandRole.Rear;
             }
 
             bool chaining = ActivePunch != null || _comboTimer > 0f;
@@ -787,9 +793,9 @@ namespace TheFighter
                 ? (_lastHand == HandRole.Lead ? HandRole.Rear : HandRole.Lead)
                 : punch.Hand;
 
-            // Only the clip set can veto it. With both sides animated this never fires; with one
-            // side animated - a single left uppercut, say - every uppercut becomes the left one
-            // instead of half of them swinging an arm that is standing still.
+            // Only the clip set can veto the *inferred* hand. With both sides animated this never
+            // fires; with one side animated - a single left uppercut, say - the alternation
+            // settles on the left one instead of half of them swinging a still arm.
             if (ClipExistsFor(punch.Kind, wanted))
             {
                 return wanted;

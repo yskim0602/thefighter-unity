@@ -543,7 +543,7 @@ namespace TheFighter
             }
             else
             {
-                line1 = "WASD step / circle     J or LMB jab     K or RMB straight     I hook     O uppercut     mouse aims (look down = body)";
+                line1 = "WASD step / circle     J jab   K straight     U/I hook L/R     N/M uppercut L/R     mouse aims (look down = body)";
                 line2 = "Shift guard     Space slip     Q / E lean     C duck     V view     H hud     R restart     Esc free cursor";
             }
 

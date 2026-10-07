@@ -879,6 +879,18 @@ namespace TheFighter
 
                 int entry = Pick(_punches[(int)punch.Kind], ref _punchVariant, !fresh,
                     HitDirection.Any, HitSeverity.Any, side);
+
+                // Pick falls back to any clip rather than none, which is right for a reaction and
+                // wrong here. Now that a key names the arm, the arm it names is the one that has
+                // to move: with no clip for that side the layer drops out and the arm IK throws
+                // the punch on its own. Plainer, but the right glove arrives.
+                if (entry >= 0 && _entries[entry].Side != ClipSide.Auto
+                    && _entries[entry].Side != side)
+                {
+                    _punchVariant = -1;
+                    return -1;
+                }
+
                 return Scrub(entry, progress);
             }
 
