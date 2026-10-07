@@ -101,16 +101,16 @@ namespace TheFighter
             Hand = HandRole.Rear,
             DamageMultiplier = 1.35f,
             StaminaCost = 13f,
-            // Shortened from 0.26/0.17/0.42. A Mixamo uppercut take winds up from the hip and
-            // finishes over the shoulder, and at 0.85s the whole windmill was on screen. A
-            // quicker punch shows 28% less of the clip *and* is 28% quicker, both at life speed.
+            // 0.26/0.17/0.42 put a whole Mixamo windmill on screen; 0.18/0.13/0.30 cut it so
+            // far the punch barely registered. This is the middle, and it is the knob to turn if
+            // the uppercut still reads wrong - raise for more of the clip, lower for less.
             //
-            // Trimming the window instead would have been the obvious move and it does not work:
-            // the window is scrubbed across the whole punch, so fewer frames in the same seconds
-            // is slow motion, not a smaller punch. The duration is the real lever.
-            WindupTime = 0.18f,
-            StrikeTime = 0.13f,
-            RecoveryTime = 0.30f,
+            // Trimming the Window instead is the obvious move and does not work: the window is
+            // scrubbed across the whole punch, so fewer frames in the same seconds is slow motion
+            // rather than a smaller punch. Duration is the only honest lever.
+            WindupTime = 0.22f,
+            StrikeTime = 0.15f,
+            RecoveryTime = 0.36f,
             RangeMultiplier = 0.75f,
             GuardPierce = 0.35f,
             HitRadius = 0.11f,

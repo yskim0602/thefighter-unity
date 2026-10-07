@@ -229,6 +229,10 @@ namespace TheFighter
         /// is learned while it plays alone, and only the *difference between clips* is cancelled.
         /// The bob inside each one survives untouched.
         [Range(0f, 1f)] public float FootworkHipLock = 1f;
+        /// Hard ceiling on that correction, in metres. Mixamo clips disagree about hip height by
+        /// a few centimetres, never by a foot, so anything larger is a bug in the learning rather
+        /// than a tall clip - and a bug here is a fighter hovering over the ring.
+        public float FootworkHipLimit = 0.1f;
 
         [Header("Blending")]
         /// Weights are damped rather than set outright. Without this the stance/footwork mix
@@ -530,6 +534,7 @@ namespace TheFighter
                 HitReactionSeconds * HeavyHitScale);
             anyTight |= ReportAction(report, "SLIP", _slip, CombatTuning.DodgeDuration);
             anyTight |= ReportFootwork(report);
+            anyTight |= ReportHands(report);
 
             if (anyTight)
             {
@@ -1171,6 +1176,54 @@ namespace TheFighter
             _layers.SetInputWeight((int)Layer.Full, _fullWeight);
         }
 
+        /// Whether a punch clip throws with the hand the fight thinks it does.
+        ///
+        /// Nothing errors when they disagree - the clip swings one arm while hit detection, the
+        /// aim IK and the guard release all follow the other - so it shows up as a punch that
+        /// goes nowhere near the target with no hint as to why. There is no runtime mirror in the
+        /// Playables API, so this cannot be fixed in code; it has to be said.
+        bool ReportHands(System.Text.StringBuilder report)
+        {
+            bool wrong = false;
+            bool leadIsLeft = Owner.CurrentStance == Stance.Orthodox;
+
+            for (int i = 0; i < PunchLibrary.All.Length; i++)
+            {
+                PunchKind kind = PunchLibrary.All[i];
+                PunchDefinition punch = PunchLibrary.Get(kind);
+                List<int> variants = _punches[(int)kind];
+
+                bool throwsLeft = punch.Hand == HandRole.Lead ? leadIsLeft : !leadIsLeft;
+
+                for (int v = 0; v < variants.Count; v++)
+                {
+                    string name = _entries[variants[v]].Clip.name.ToLowerInvariant();
+                    bool saysLeft = name.Contains("left");
+                    bool saysRight = name.Contains("right");
+                    if (!saysLeft && !saysRight)
+                    {
+                        continue;
+                    }
+
+                    if (saysLeft != throwsLeft)
+                    {
+                        wrong = true;
+                        report.Append("\n  ").Append(punch.DisplayName)
+                            .Append("  ").Append(_entries[variants[v]].Clip.name)
+                            .Append("  WRONG HAND - the fight throws this with the ")
+                            .Append(throwsLeft ? "left" : "right")
+                            .Append(" (").Append(punch.Hand).Append(" hand, ")
+                            .Append(Owner.CurrentStance).Append("), the clip swings the ")
+                            .Append(saysLeft ? "left" : "right")
+                            .Append(". Duplicate the clip with Mirror ticked, or change this "
+                                + "punch's Hand in PunchLibrary.");
+                    }
+                }
+            }
+
+            return wrong;
+        }
+
         /// Which footwork slots are empty, and said plainly - because the symptom does not look
         /// like a missing clip. A fighter walking with no step clip does not T-pose or error; he
         /// stands in his idle and slides, which reads as "the animation is broken" rather than as
@@ -1349,7 +1402,14 @@ namespace TheFighter
             {
                 Entry entry = _entries[sole];
                 // Measured before any correction, so the raw clip height is what gets learned.
-                float raw = hipHeight + _baseOffset * FootworkHipLock;
+                // The height passed in is already uncorrected: the Animator re-poses every bone
+                // from the graph before LateUpdate, so last frame's write to the hips is gone by
+                // the time this reads them. Adding the current offset back on was therefore
+                // adding a correction that is not in the measurement - every learned baseline came
+                // out inflated by it, which inflated the next offset, which inflated the next
+                // baseline. Holding one direction for ten seconds raised the body 45cm instead of
+                // correcting 4cm, and it diverged without bound: that is the floating.
+                float raw = hipHeight;
                 entry.Baseline = entry.BaselineKnown
                     ? Mathf.Lerp(entry.Baseline, raw, 1f - Mathf.Exp(-1.2f * Time.deltaTime))
                     : raw;
@@ -1380,7 +1440,9 @@ namespace TheFighter
 
             float wanted = known > 0.0001f ? expected / known - _entries[idle].Baseline : 0f;
 
-            // Eased, so a clip whose baseline is still being learned cannot jolt the body.
+            // Eased, so a clip whose baseline is still being learned cannot jolt the body, and
+            // clamped, so one that learned a wrong baseline cannot lift it off the canvas.
+            wanted = Mathf.Clamp(wanted, -FootworkHipLimit, FootworkHipLimit);
             _baseOffset = Mathf.Lerp(_baseOffset, wanted, 1f - Mathf.Exp(-9f * Time.deltaTime));
         }
     }
