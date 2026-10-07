@@ -220,6 +220,16 @@ namespace TheFighter
         /// (which all live above it) still work.
         [Range(0f, 1f)] public float HipHeightLock = 1f;
 
+        /// Does the same for the stance and footwork clips, which the action lock never covered.
+        ///
+        /// Walking backwards is base-layer only, so the action-scaled lock was zero and Step
+        /// Backward's own hip height went through raw - the body rose or sank on its own the
+        /// moment the clip blended in, which looked like hopping. Rather than pinning the hips
+        /// (which would kill the bob that makes a stance look alive), each clip's resting height
+        /// is learned while it plays alone, and only the *difference between clips* is cancelled.
+        /// The bob inside each one survives untouched.
+        [Range(0f, 1f)] public float FootworkHipLock = 1f;
+
         [Header("Blending")]
         /// Weights are damped rather than set outright. Without this the stance/footwork mix
         /// follows the AI's frame-to-frame jitter and the skeleton visibly shivers.
@@ -277,6 +287,11 @@ namespace TheFighter
             public float Length;
             public float Target;
             public float Weight;
+            /// The hip height this clip sits at, learned while it is the only thing playing.
+            /// Mixamo clips disagree about it, so blending between two of them moves the body
+            /// vertically for no reason anybody asked for.
+            public float Baseline;
+            public bool BaselineKnown;
         }
 
         BoxerClipSet _clips;
@@ -311,6 +326,7 @@ namespace TheFighter
         Transform _hips;
         float _hipHeight;
         bool _hipCaptured;
+        float _baseOffset;
 
         float _stanceClock;
         float _strideClock;
@@ -1264,28 +1280,107 @@ namespace TheFighter
 
             Transform reference = ModelAnimator.transform;
             Vector3 local = reference.InverseTransformPoint(_hips.position);
-
-            // Learn the resting height from the stance itself, while nothing is distorting it. A
-            // slow running average rather than one sample, so the idle bob averages out instead of
-            // pinning the hips to wherever frame one happened to catch them.
             float action = Mathf.Max(_upperWeight, _fullWeight);
-            if (action < 0.01f)
-            {
-                _hipHeight = _hipCaptured
-                    ? Mathf.Lerp(_hipHeight, local.y, 1f - Mathf.Exp(-0.8f * Time.deltaTime))
-                    : local.y;
-                _hipCaptured = true;
-                return;
-            }
+
+            LearnBaselines(local.y, action);
+
+            // Two corrections, and they answer different things. The action lock pins the hips
+            // outright, because a punch clip's hip height is simply wrong for our stance. The
+            // footwork one cancels only the gap between two base clips' resting heights, leaving
+            // the vertical bob inside each one alone - that bob is most of what makes a step look
+            // like weight moving.
+            float offset = _baseOffset * FootworkHipLock;
+            float corrected = local.y - offset;
 
             float strength = HipHeightLock * action;
-            if (!_hipCaptured || strength <= 0.001f)
+            if (_hipCaptured && strength > 0.001f)
+            {
+                corrected = Mathf.Lerp(corrected, _hipHeight, strength);
+            }
+
+            if (Mathf.Abs(corrected - local.y) < 0.0005f)
             {
                 return;
             }
 
-            local.y = Mathf.Lerp(local.y, _hipHeight, strength);
+            local.y = corrected;
             _hips.position = reference.TransformPoint(local);
+        }
+
+        /// Learns the stance reference, and each base clip's own resting height.
+        ///
+        /// A clip's height can only be measured while it is the only thing being applied - any
+        /// blend is already an average of two. So learning waits for one clip to hold nearly all
+        /// the base weight, and takes a slow average once it does, which lets the clip's own bob
+        /// cancel out instead of being mistaken for its height.
+        void LearnBaselines(float hipHeight, float action)
+        {
+            if (action >= 0.01f)
+            {
+                return;
+            }
+
+            // The stance reference the action lock pins to.
+            _hipHeight = _hipCaptured
+                ? Mathf.Lerp(_hipHeight, hipHeight, 1f - Mathf.Exp(-0.8f * Time.deltaTime))
+                : hipHeight;
+            _hipCaptured = true;
+
+            int sole = -1;
+            float total = 0f;
+
+            for (int i = 0; i < _entries.Count; i++)
+            {
+                Entry entry = _entries[i];
+                if (entry.Layer != Layer.Base)
+                {
+                    continue;
+                }
+
+                total += entry.Weight;
+                if (entry.Weight > 0.9f)
+                {
+                    sole = i;
+                }
+            }
+
+            if (sole >= 0)
+            {
+                Entry entry = _entries[sole];
+                // Measured before any correction, so the raw clip height is what gets learned.
+                float raw = hipHeight + _baseOffset * FootworkHipLock;
+                entry.Baseline = entry.BaselineKnown
+                    ? Mathf.Lerp(entry.Baseline, raw, 1f - Mathf.Exp(-1.2f * Time.deltaTime))
+                    : raw;
+                entry.BaselineKnown = true;
+            }
+
+            // Where this frame's mix of base clips wants the hips, against where idle puts them.
+            int idle = _poses[(int)Pose.Idle];
+            if (idle < 0 || !_entries[idle].BaselineKnown || total <= 0.0001f)
+            {
+                _baseOffset = Mathf.MoveTowards(_baseOffset, 0f, Time.deltaTime);
+                return;
+            }
+
+            float expected = 0f;
+            float known = 0f;
+
+            for (int i = 0; i < _entries.Count; i++)
+            {
+                Entry entry = _entries[i];
+                if (entry.Layer != Layer.Base || !entry.BaselineKnown || entry.Weight <= 0.0001f)
+                {
+                    continue;
+                }
+                expected += entry.Baseline * entry.Weight;
+                known += entry.Weight;
+            }
+
+            float wanted = known > 0.0001f ? expected / known - _entries[idle].Baseline : 0f;
+
+            // Eased, so a clip whose baseline is still being learned cannot jolt the body.
+            _baseOffset = Mathf.Lerp(_baseOffset, wanted, 1f - Mathf.Exp(-9f * Time.deltaTime));
         }
     }
 }

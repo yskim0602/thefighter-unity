@@ -85,6 +85,13 @@ namespace TheFighter
         /// How much of that aim a feint gets. Some, so it reads as a punch; not all, because a
         /// feint only works if it cannot be told from one in time.
         [Range(0f, 1f)] public float FeintAimWeight = 0.5f;
+        /// How fast the aim lets go when the strike ends.
+        ///
+        /// It used to simply stop: `aiming` goes false the frame the strike becomes recovery, so
+        /// the weight fell from 0.95 to 0 between two frames and the arm snapped. On a slow punch
+        /// that snap is the most visible thing in the animation - it was the uppercut flailing.
+        /// Fast enough not to drag the hand along, slow enough to be a release.
+        public float AimReleaseSpeed = 6f;
 
         [Header("Where the elbow goes")]
         /// Which way the elbow is pushed off the straight shoulder-to-glove line. x is outward
@@ -112,6 +119,7 @@ namespace TheFighter
         /// its own guard to fade or it starts from the wrong place.
         public float ReleaseSpeed = 40f;
 
+        float _aim;
         float _leftWeight;
         float _rightWeight;
         GuardShape _shape = GuardShape.High;
@@ -201,12 +209,19 @@ namespace TheFighter
             bool leftThrowing = punching && leftIsActive;
             bool rightThrowing = punching && !leftIsActive;
 
-            float aim = 0f;
+            float wanted = 0f;
             if (aiming)
             {
                 float t = Mathf.InverseLerp(AimStartTrack, 1f, Owner.PunchTrack);
-                aim = Mathf.SmoothStep(0f, 1f, t) * AimWeight * aimScale;
+                wanted = Mathf.SmoothStep(0f, 1f, t) * AimWeight * aimScale;
             }
+
+            // Rising follows the punch exactly, because the fist has to arrive where it is aimed.
+            // Falling is damped, because nothing has to arrive anywhere on the way back.
+            _aim = wanted > _aim
+                ? wanted
+                : Mathf.MoveTowards(_aim, wanted, AimReleaseSpeed * Time.deltaTime);
+            float aim = _aim;
 
             GuardShape shape = ChooseShape();
 

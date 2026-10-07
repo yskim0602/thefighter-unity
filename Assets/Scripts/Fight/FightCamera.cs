@@ -29,6 +29,32 @@ namespace TheFighter
         public CameraMode Mode = CameraMode.Broadcast;
         public float FieldOfView = 58f;
 
+        /// Whether the camera holds its angle or wanders.
+        ///
+        /// Wandering looks like television and plays like a fight with the floor tilting. Footwork
+        /// is opponent-relative, so "circle left" is always left in the fighter's own frame - but
+        /// if the camera has drifted 22 degrees since you last pressed it, that key now points
+        /// somewhere else on screen. The arc swung through 22 degrees of travel, which is enough
+        /// that muscle memory cannot form. That is a control problem wearing a cinematography
+        /// costume, so Stable is the default and Roaming is for replays and highlights.
+        public enum Framing
+        {
+            /// One angle for the fight, with only enough breath to not look frozen.
+            Stable,
+            /// The wandering ringside operator. Good to watch, bad to play.
+            Roaming
+        }
+
+        [Header("Framing")]
+        public Framing Shot = Framing.Stable;
+        /// The angle Stable holds, off straight-behind-the-player. Far enough round that the
+        /// player's own back does not hide the opponent - see OrbitMin.
+        public float StableAngle = 27f;
+        /// How much it still breathes, in degrees. Small on purpose: this is the difference
+        /// between a camera that is alive and a camera that moves the controls.
+        public float StableDrift = 2.5f;
+        public float StableDriftRate = 0.17f;
+
         [Header("Broadcast arc")]
         /// How far off straight-behind-the-player the camera wanders. It stays on one side of the
         /// ring for a whole fight, the way a ringside operator does.
@@ -78,6 +104,7 @@ namespace TheFighter
         float _orbitVelocity;
         float _dwellTimer;
         float _heightPhase;
+        float _driftPhase;
         Vector3 _positionVelocity;
 
         public bool FirstPerson
@@ -106,7 +133,9 @@ namespace TheFighter
 
             _heightPhase = Random.value * 10f;
             _orbitSide = Random.value < 0.5f ? -1f : 1f;
-            _orbit = _orbitSide * (OrbitMin + OrbitRange) * 0.5f;
+            _orbit = _orbitSide * (Shot == Framing.Stable
+                ? StableAngle : (OrbitMin + OrbitRange) * 0.5f);
+            _driftPhase = Random.value * 10f;
             PickOrbitTarget();
         }
 
@@ -164,6 +193,17 @@ namespace TheFighter
 
         void UpdateOrbit(float dt)
         {
+            _heightPhase += dt * 0.35f;
+
+            if (Shot == Framing.Stable)
+            {
+                _driftPhase += dt * StableDriftRate * Mathf.PI * 2f;
+                _orbitTarget = _orbitSide * (StableAngle + Mathf.Sin(_driftPhase) * StableDrift);
+                _orbit = Mathf.SmoothDamp(_orbit, _orbitTarget, ref _orbitVelocity, 0.8f,
+                    OrbitSpeed, dt);
+                return;
+            }
+
             _dwellTimer -= dt;
             _orbit = Mathf.SmoothDamp(_orbit, _orbitTarget, ref _orbitVelocity, 1.6f, OrbitSpeed, dt);
 
@@ -171,8 +211,6 @@ namespace TheFighter
             {
                 PickOrbitTarget();
             }
-
-            _heightPhase += dt * 0.35f;
         }
 
         void PickOrbitTarget()
