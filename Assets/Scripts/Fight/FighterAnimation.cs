@@ -481,28 +481,8 @@ namespace TheFighter
 
                 for (int v = 0; v < variants.Count; v++)
                 {
-                    Entry entry = _entries[variants[v]];
-                    float shown = (entry.End - entry.Start) * entry.Length;
-                    float have = Mathf.Max(0.01f, punch.TotalTime);
-                    float rate = shown / have;
-
-                    report.Append("\n  ").Append(punch.DisplayName)
-                        .Append("  ").Append(entry.Clip.name)
-                        .Append("  clip ").Append(entry.Length.ToString("0.00")).Append('s')
-                        .Append("  window ").Append(entry.Start.ToString("0.00"))
-                        .Append('-').Append(entry.End.ToString("0.00"))
-                        .Append(" = ").Append(shown.ToString("0.00")).Append('s')
-                        .Append("  in ").Append(have.ToString("0.00")).Append('s')
-                        .Append("  -> ").Append(rate.ToString("0.0")).Append('x');
-
-                    if (rate > 2.5f)
-                    {
-                        anyTight = true;
-                        // The slice that would play at 1x, kept at the window's start.
-                        float span = Mathf.Clamp01(have / entry.Length);
-                        report.Append("  TOO LONG, try ").Append(entry.Start.ToString("0.00"))
-                            .Append('-').Append(Mathf.Min(1f, entry.Start + span).ToString("0.00"));
-                    }
+                    anyTight |= Line(report, punch.DisplayName, _entries[variants[v]],
+                        Mathf.Max(0.01f, punch.TotalTime));
                 }
             }
 
@@ -514,9 +494,10 @@ namespace TheFighter
 
             if (anyTight)
             {
-                report.Append("\n  A window marked TOO LONG is being fast-forwarded. Trim it in "
-                    + "the clip's Window on BoxingBootstrap, or pick the slice of the take that is "
-                    + "actually the punch - the fight's timing does not change either way.");
+                report.Append("\n  Set a flagged clip's Window to the \"1x would be\" numbers on "
+                    + "its line. TOO FAST is a blur; TOO SLOW is slow motion, which reads as the "
+                    + "punch having no weight. The fight's timing does not change either way - "
+                    + "only which frames you see.");
                 Debug.LogWarning(report.ToString());
             }
             else
@@ -657,10 +638,16 @@ namespace TheFighter
         static HitSeverity ForceFromName(string name)
         {
             string lower = name.ToLowerInvariant();
-            // Mixamo's own words are Large and Small; ours are Heavy and Light. Both are read, so
-            // renaming a file to say which is enough and renaming it back does no harm.
-            if (lower.Contains("heavy") || lower.Contains("large")) { return HitSeverity.Heavy; }
-            if (lower.Contains("light") || lower.Contains("small")) { return HitSeverity.Light; }
+
+            // Our words first, Mixamo's second, and that order is the whole point. Mixamo ships
+            // "Standing React Large From Left" and a set downloaded entirely from the Large
+            // variants carries that word in every file - so checking it first read every clip as
+            // Heavy, including the ones renamed to say Light. The word someone typed on purpose
+            // has to beat the word that came with the download.
+            if (lower.Contains("heavy")) { return HitSeverity.Heavy; }
+            if (lower.Contains("light")) { return HitSeverity.Light; }
+            if (lower.Contains("large")) { return HitSeverity.Heavy; }
+            if (lower.Contains("small")) { return HitSeverity.Light; }
             return HitSeverity.Any;
         }
 
@@ -1117,42 +1104,66 @@ namespace TheFighter
 
         /// Same fit check for the reaction slots, which have their own durations - and which is
         /// where the problem usually is, since a react clip is seconds long and a reaction is not.
-        bool ReportAction(System.Text.StringBuilder report, string name, List<int> pool, float have)
+        bool ReportAction(System.Text.StringBuilder report, string name, List<int> pool,
+            float baseDuration)
         {
-            bool tight = false;
-
             if (pool.Count == 0)
             {
                 report.Append("\n  ").Append(name).Append("  (no clip)");
                 return false;
             }
 
+            bool off = false;
+
             for (int i = 0; i < pool.Count; i++)
             {
                 Entry entry = _entries[pool[i]];
-                float shown = (entry.End - entry.Start) * entry.Length;
-                float rate = shown / Mathf.Max(0.01f, have);
 
-                report.Append("\n  ").Append(name)
-                    .Append("  ").Append(entry.Clip.name)
-                    .Append("  [").Append(entry.Direction).Append('/').Append(entry.Force)
-                    .Append(']')
-                    .Append("  window ").Append(entry.Start.ToString("0.00"))
-                    .Append('-').Append(entry.End.ToString("0.00"))
-                    .Append(" = ").Append(shown.ToString("0.00")).Append('s')
-                    .Append("  in ").Append(have.ToString("0.00")).Append('s')
-                    .Append("  -> ").Append(rate.ToString("0.0")).Append('x');
+                // A clip tagged Heavy is given the longer reaction, so it has to be measured
+                // against that rather than against the base.
+                float have = baseDuration
+                    * (entry.Force == HitSeverity.Heavy ? HeavyHitScale : 1f);
 
-                if (rate > 2.5f)
-                {
-                    tight = true;
-                    float span = Mathf.Clamp01(have / entry.Length);
-                    report.Append("  TOO LONG, try ").Append(entry.Start.ToString("0.00"))
-                        .Append('-').Append(Mathf.Min(1f, entry.Start + span).ToString("0.00"));
-                }
+                off |= Line(report, name, entry, have);
             }
 
-            return tight;
+            return off;
+        }
+
+        /// One clip's fit, and what window would put it at life speed.
+        ///
+        /// Flags both directions. Too fast is a blur; too slow is slow motion, which is just as
+        /// wrong and much easier to miss, because a reaction in slow motion still looks like a
+        /// reaction - it only feels weightless.
+        bool Line(System.Text.StringBuilder report, string name, Entry entry, float have)
+        {
+            float shown = (entry.End - entry.Start) * entry.Length;
+            float rate = shown / Mathf.Max(0.01f, have);
+            float ideal = Mathf.Clamp01(have / entry.Length);
+
+            report.Append("\n  ").Append(name)
+                .Append("  ").Append(entry.Clip.name)
+                .Append("  [").Append(entry.Direction).Append('/').Append(entry.Force)
+                .Append(']')
+                .Append("  clip ").Append(entry.Length.ToString("0.00")).Append('s')
+                .Append("  window ").Append(entry.Start.ToString("0.00"))
+                .Append('-').Append(entry.End.ToString("0.00"))
+                .Append("  -> ").Append(rate.ToString("0.0")).Append('x')
+                .Append("   1x would be ").Append(entry.Start.ToString("0.00"))
+                .Append('-').Append(Mathf.Min(1f, entry.Start + ideal).ToString("0.00"));
+
+            if (rate > 1.8f)
+            {
+                report.Append("   TOO FAST");
+                return true;
+            }
+            if (rate < 0.7f)
+            {
+                report.Append("   TOO SLOW");
+                return true;
+            }
+
+            return false;
         }
 
         /// Pulls the hips back to the height the stance sits at, in proportion to how much of the
