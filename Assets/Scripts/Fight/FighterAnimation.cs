@@ -220,13 +220,17 @@ namespace TheFighter
         /// Weights are damped rather than set outright. Without this the stance/footwork mix
         /// follows the AI's frame-to-frame jitter and the skeleton visibly shivers.
         public float StanceBlendSpeed = 9f;
+        /// Footwork gets its own, faster, because a step is an event rather than a mood. At the
+        /// stance speed a short press spends its whole duration blending in and never arrives,
+        /// which looks exactly like not stepping at all.
+        public float FootworkBlendSpeed = 20f;
         /// Punches have to land on their frame, so they are not damped nearly as much.
         public float ActionBlendSpeed = 36f;
         /// Below this much movement it is pure stance, above the next it is pure footwork. The gap
         /// between them is deliberately narrow: a long cross-fade averages two unrelated poses and
         /// that average is what reads as boneless.
-        public float StepDeadzone = 0.12f;
-        public float StepFullSpeed = 0.55f;
+        public float StepDeadzone = 0.08f;
+        public float StepFullSpeed = 0.38f;
 
         enum Pose
         {
@@ -287,6 +291,16 @@ namespace TheFighter
         /// ArmPose reads this and stands down: if a guard clip exists, IK gloves fighting an
         /// animated guard gives you neither.
         public bool GuardClipAssigned { get; private set; }
+
+        // What the footwork layer decided this frame. "He sometimes just does not step" is a
+        // sentence with at least four causes behind it - no clip, a weight that never arrived, a
+        // diagonal splitting one step across two clips, or a stride rate near zero - and they are
+        // indistinguishable by eye. PostureProbe reads these.
+        public float FootworkInput { get; private set; }
+        public float FootworkEffort { get; private set; }
+        public float StrideRate { get { return _strideRate; } }
+        public string ActiveStep { get; private set; }
+        public float ActiveStepWeight { get; private set; }
 
         Transform _hips;
         float _hipHeight;
@@ -491,6 +505,7 @@ namespace TheFighter
             anyTight |= ReportAction(report, "HIT BODY", _hitBody,
                 HitReactionSeconds * HeavyHitScale);
             anyTight |= ReportAction(report, "SLIP", _slip, CombatTuning.DodgeDuration);
+            anyTight |= ReportFootwork(report);
 
             if (anyTight)
             {
@@ -964,6 +979,9 @@ namespace TheFighter
             float effort = Mathf.SmoothStep(0f, 1f,
                 Mathf.InverseLerp(StepDeadzone, StepFullSpeed, move.magnitude));
 
+            FootworkInput = move.magnitude;
+            FootworkEffort = effort;
+
             // Movement is opponent-relative - x circles, y steps in and out - so each axis maps
             // straight onto one clip. Splitting the effort between them by magnitude means a
             // diagonal plays forward and sideways together instead of snapping to whichever axis
@@ -1012,6 +1030,11 @@ namespace TheFighter
 
             Add(lateralClip, lateralShare);
             Add(depthClip, depthShare);
+
+            // Whichever of the two is carrying more of the step, for the readout.
+            int shown = depthShare >= lateralShare ? depthClip : lateralClip;
+            ActiveStep = shown >= 0 ? _entries[shown].Clip.name : "(none)";
+            ActiveStepWeight = shown >= 0 ? _entries[shown].Weight : 0f;
         }
 
         /// Which guard clip the situation calls for, falling back to the plain one. Reads the
@@ -1075,7 +1098,9 @@ namespace TheFighter
             for (int i = 0; i < _entries.Count; i++)
             {
                 Entry entry = _entries[i];
-                float speed = entry.Looping ? StanceBlendSpeed : ActionBlendSpeed;
+                float speed = entry.Looping
+                    ? (entry.Striding ? FootworkBlendSpeed : StanceBlendSpeed)
+                    : ActionBlendSpeed;
                 entry.Weight = Mathf.MoveTowards(entry.Weight, entry.Target, speed * deltaTime);
 
                 if (entry.Layer == Layer.Base)
@@ -1100,6 +1125,34 @@ namespace TheFighter
             _layers.SetInputWeight((int)Layer.Base, 1f);
             _layers.SetInputWeight((int)Layer.Upper, _upperWeight);
             _layers.SetInputWeight((int)Layer.Full, _fullWeight);
+        }
+
+        /// Which footwork slots are empty, and said plainly - because the symptom does not look
+        /// like a missing clip. A fighter walking with no step clip does not T-pose or error; he
+        /// stands in his idle and slides, which reads as "the animation is broken" rather than as
+        /// "there is no clip for walking forward".
+        bool ReportFootwork(System.Text.StringBuilder report)
+        {
+            string[] names = { "STEP FWD", "STEP BACK", "STEP LEFT", "STEP RIGHT" };
+            Pose[] slots = { Pose.StepForward, Pose.StepBack, Pose.StepLeft, Pose.StepRight };
+            bool missing = false;
+
+            for (int i = 0; i < slots.Length; i++)
+            {
+                int index = _poses[(int)slots[i]];
+                if (index < 0)
+                {
+                    missing = true;
+                    report.Append("\n  ").Append(names[i])
+                        .Append("  (no clip - he will slide without stepping in this direction)");
+                    continue;
+                }
+
+                report.Append("\n  ").Append(names[i])
+                    .Append("  ").Append(_entries[index].Clip.name);
+            }
+
+            return missing;
         }
 
         /// Same fit check for the reaction slots, which have their own durations - and which is

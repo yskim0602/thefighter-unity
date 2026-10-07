@@ -60,6 +60,19 @@ namespace TheFighter
         [Range(0f, 1f)] public float BaitChance = 0.22f;
         public float BaitSeconds = 0.7f;
 
+        [Header("Ring craft")]
+        /// How long one intention lasts before it is reconsidered. Seconds, not frames: this is
+        /// meant to read as a decision a fighter made, and anything shorter reads as jitter.
+        public float ApproachSecondsMin = 1.3f;
+        public float ApproachSecondsMax = 3.4f;
+        /// How far past the centre an opponent has to drift before cutting the ring is worth
+        /// doing, as a fraction of the ring's half extent. Cutting somebody off in open space
+        /// achieves nothing.
+        public float CutThreshold = 0.45f;
+        /// And how close to the ropes the fighter has to be before getting himself out matters
+        /// more than cornering anybody.
+        public float EscapeThreshold = 0.62f;
+
         [Header("Style")]
         public float EarlyPhaseSeconds = 12f;
         public float LowHealthRatio = 0.35f;
@@ -85,6 +98,27 @@ namespace TheFighter
         bool _dodgeQueued;
 
         // Plan
+        /// What the fighter is trying to do with the distance right now. The old controller had
+        /// no equivalent - it held one number - and that is what made it feel glued.
+        enum Approach
+        {
+            /// Close it down and stay there.
+            Pressure,
+            /// Sit at his own range and work.
+            Hold,
+            /// Step out, breathe, reset the exchange.
+            Reset,
+            /// Take the angle that shrinks the space the other man can escape into.
+            Cut
+        }
+
+        Approach _approach = Approach.Hold;
+        float _approachTimer;
+        float _wantDistance = 1f;
+        float _band = 0.3f;
+        float _closeSpeed = 1f;
+        float _circleAmount = 0.5f;
+
         float _circleTimer;
         float _circleDirection = 1f;
         float _aim = 1f;
@@ -106,6 +140,7 @@ namespace TheFighter
             _lastHealth = self != null ? self.Health : 0f;
             _fightTime = 0f;
             _reactionTimer = 0f;
+            _approachTimer = 0f;
             _read.Reset();
         }
 
@@ -156,6 +191,12 @@ namespace TheFighter
             {
                 _circleTimer = Random.Range(1.2f, 2.8f);
                 _circleDirection = Random.value < 0.5f ? -1f : 1f;
+            }
+
+            _approachTimer -= deltaTime;
+            if (_approachTimer <= 0f)
+            {
+                PickApproach();
             }
 
             _planTimer -= deltaTime;
@@ -480,28 +521,141 @@ namespace TheFighter
             }
         }
 
+        /// Picks what to do with the distance for the next few seconds.
+        ///
+        /// The controller this replaced held a single preferred distance with a 0.30m deadband,
+        /// which inside a 6.2m ring meant the entire fight happened in five percent of the
+        /// available space - back away and it closed instantly, every time, so it read as being
+        /// on a string rather than as being chased. A fighter decides *when* to come in; that is
+        /// what this is.
+        void PickApproach()
+        {
+            _approachTimer = Random.Range(ApproachSecondsMin, ApproachSecondsMax);
+
+            float preferred = _self.Profile.PreferredDistance;
+            float aggression = _self.Profile.Aggression;
+
+            // Weights, not a decision tree, so the same situation does not always produce the same
+            // fighter. Tired or hurt leans toward resetting; an aggressive style leans in.
+            float tired = 1f - Mathf.Clamp01(_self.StaminaRatio);
+            float hurt = _self.HurtFactor;
+
+            float pressure = aggression * 1.2f * (1f - tired * 0.8f) * (1f - hurt * 0.7f);
+            float hold = 0.9f;
+            float reset = 0.35f + tired * 1.6f + hurt * 1.2f;
+            float cut = Cornered(_opponent) ? aggression * 1.8f : 0.15f;
+
+            float roll = Random.value * (pressure + hold + reset + cut);
+
+            if (roll < pressure) { _approach = Approach.Pressure; }
+            else if (roll < pressure + hold) { _approach = Approach.Hold; }
+            else if (roll < pressure + hold + reset) { _approach = Approach.Reset; }
+            else { _approach = Approach.Cut; }
+
+            switch (_approach)
+            {
+                case Approach.Pressure:
+                    // Inside his own jab, where the work gets done.
+                    _wantDistance = preferred * 0.78f;
+                    _band = 0.14f;
+                    _closeSpeed = 1f;
+                    _circleAmount = 0.3f;
+                    break;
+
+                case Approach.Reset:
+                    // Out of range on purpose, and moving while he is there.
+                    _wantDistance = preferred + Random.Range(0.7f, 1.4f);
+                    _band = 0.35f;
+                    _closeSpeed = 0.55f;
+                    _circleAmount = 0.8f;
+                    break;
+
+                case Approach.Cut:
+                    _wantDistance = preferred + 0.15f;
+                    _band = 0.3f;
+                    _closeSpeed = 0.75f;
+                    _circleAmount = 1f;
+                    break;
+
+                default:
+                    _wantDistance = preferred;
+                    // A wide band is most of what stops it feeling glued: inside it he simply
+                    // does not correct, so the distance drifts the way a real one does.
+                    _band = 0.42f;
+                    _closeSpeed = 0.7f;
+                    _circleAmount = 0.55f;
+                    break;
+            }
+        }
+
         Vector2 ComputeMove()
         {
-            float distance = _self.DistanceTo(_opponent);
-            float preferred = _self.Profile.PreferredDistance;
-
             // While baiting he holds his ground rather than drifting out of the trap.
             if (_baitTimer > 0f)
             {
                 return new Vector2(_circleDirection * 0.2f, 0f);
             }
 
+            float distance = _self.DistanceTo(_opponent);
+
             float forward = 0f;
-            if (distance > preferred + 0.12f)
+            if (distance > _wantDistance + _band)
             {
-                forward = 1f;
+                forward = _closeSpeed;
             }
-            else if (distance < preferred - 0.18f)
+            else if (distance < _wantDistance - _band)
             {
-                forward = -0.7f;
+                forward = -0.8f;
             }
 
-            return new Vector2(_circleDirection * 0.55f, forward);
+            return new Vector2(Lateral() * _circleAmount, forward);
+        }
+
+        /// Which way to circle. Getting off the ropes beats cornering somebody, and cornering
+        /// somebody beats drifting - so the three are checked in that order.
+        float Lateral()
+        {
+            Vector3 centre = Vector3.zero;
+
+            Vector3 mine = Flat(_self.transform.position - centre);
+            if (mine.magnitude > CombatTuning.RingHalfExtent * EscapeThreshold)
+            {
+                // On the ropes himself: circle toward open floor rather than along them.
+                return Side(-mine);
+            }
+
+            if (_approach == Approach.Cut || Cornered(_opponent))
+            {
+                // The space he can escape into is the way back to the middle, so taking that side
+                // is what shrinks it. This is ring cutting, and it is the difference between
+                // chasing a man and trapping one.
+                Vector3 escape = Flat(centre - _opponent.transform.position);
+                if (escape.sqrMagnitude > 0.01f)
+                {
+                    return Side(escape);
+                }
+            }
+
+            return _circleDirection;
+        }
+
+        bool Cornered(Fighter fighter)
+        {
+            return Flat(fighter.transform.position).magnitude
+                > CombatTuning.RingHalfExtent * CutThreshold;
+        }
+
+        static Vector3 Flat(Vector3 v)
+        {
+            v.y = 0f;
+            return v;
+        }
+
+        /// Turns a world direction into "circle left or right" in the fighter's own frame.
+        float Side(Vector3 worldDirection)
+        {
+            float dot = Vector3.Dot(_self.transform.right, worldDirection.normalized);
+            return Mathf.Abs(dot) < 0.15f ? _circleDirection : Mathf.Sign(dot);
         }
 
         PunchKind PickStylePunch(float distance)

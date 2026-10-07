@@ -38,6 +38,7 @@ namespace TheFighter
 
         Animator _animator;
         CrouchPose _crouch;
+        FighterAnimation _animation;
         Transform _hips;
         Transform _chest;
         Transform _leftFoot;
@@ -94,6 +95,7 @@ namespace TheFighter
             }
 
             _crouch = Target.GetComponent<CrouchPose>();
+            _animation = Target.GetComponent<FighterAnimation>();
             _animator = Target.GetComponentInChildren<Animator>();
             if (_animator == null || !_animator.isHuman)
             {
@@ -307,7 +309,7 @@ namespace TheFighter
             _mono.fontSize = Mathf.RoundToInt(13 * _scale);
 
             float w = 430f * _scale;
-            float h = 286f * _scale;
+            float h = 320f * _scale;
             Rect area = new Rect(Screen.width - w - 12f * _scale,
                 Screen.height - h - 12f * _scale, w, h);
 
@@ -350,6 +352,27 @@ namespace TheFighter
                 twistColor);
 
             y += 6f * _scale;
+
+            // Four different causes look identical from outside: no clip, a weight that never
+            // arrived, a diagonal split across two clips, or a stride near standstill.
+            if (_animation != null)
+            {
+                bool stepping = _animation.ActiveStepWeight > 0.25f;
+                bool moving = Target.Motor != null && Target.Motor.PlanarSpeed > 0.15f;
+                Write(x, ref y, line, string.Format(
+                    "feet    in {0:0.00}  effort {1:0.00}  stride {2:0.00}x  w {3:0.00}  {4}",
+                    _animation.FootworkInput, _animation.FootworkEffort,
+                    _animation.StrideRate, _animation.ActiveStepWeight,
+                    _animation.ActiveStep),
+                    moving && !stepping ? new Color(1f, 0.45f, 0.4f)
+                        : new Color(0.55f, 0.85f, 0.6f));
+
+                if (moving && !stepping)
+                {
+                    Write(x, ref y, line, "        MOVING WITHOUT STEPPING", new Color(1f, 0.45f, 0.4f));
+                }
+            }
+
             bool droveLast = _peakCommit >= CommitmentFloor;
             Write(x, ref y, line, string.Format("drive   commit {0:0.00}  lunge {1:0.000}m   {2}",
                 _peakCommit, _peakLunge, droveLast ? "OK" : "NO WEIGHT TRANSFER"),
