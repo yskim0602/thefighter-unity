@@ -497,6 +497,18 @@ namespace TheFighter
                 && (State == ActionState.Free || State == ActionState.Recovery)
                 && !IsDodging;
 
+            // Insisting on a guard that has nothing left in it. The hands do not come up - that
+            // is what GuardBroken means - but the arms are still out there taking it, and that
+            // costs health rather than nothing. Without this the guard was free until it snapped,
+            // since gas regenerates and health does not.
+            if (intent.Guard && GuardBroken && !IsDodging && State != ActionState.Down
+                && State != ActionState.KnockedOut)
+            {
+                Health = Mathf.Max(0f, Health - CombatTuning.GuardSpentHealthPerSecond * dt);
+                Stamina = Mathf.Max(0f, Stamina - CombatTuning.GuardStaminaDrainPerSecond
+                    * CombatTuning.GuardSpentStaminaMultiplier * dt);
+            }
+
             if (wants)
             {
                 if (!IsGuarding)
@@ -509,7 +521,15 @@ namespace TheFighter
                     _guardHeldTime += dt;
                 }
 
-                Stamina = Mathf.Max(0f, Stamina - CombatTuning.GuardStaminaDrainPerSecond * dt);
+                // The strain climbs as the gauge empties, so running it down is a decision you can
+                // feel arriving instead of a cliff edge.
+                float strain = GuardRatio < CombatTuning.GuardStrainRatio
+                    ? Mathf.Lerp(CombatTuning.GuardStrainMultiplier, 1f,
+                        GuardRatio / Mathf.Max(0.0001f, CombatTuning.GuardStrainRatio))
+                    : 1f;
+
+                Stamina = Mathf.Max(0f,
+                    Stamina - CombatTuning.GuardStaminaDrainPerSecond * strain * dt);
             }
             else
             {
@@ -1069,7 +1089,7 @@ namespace TheFighter
 
             // Past it: reaching, with the body left behind.
             return Mathf.Lerp(1f, CombatTuning.ReachingPower,
-                Mathf.Clamp01((at - ideal) / Mathf.Max(0.0001f, range - ideal)));
+                Mathf.Clamp01((distance - ideal) / Mathf.Max(0.0001f, range - ideal)));
         }
 
         /// Which way the punch came in, from where it touched. Lateral beats forward when the

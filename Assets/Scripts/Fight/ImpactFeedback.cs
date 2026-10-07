@@ -60,6 +60,13 @@ namespace TheFighter
             }
         }
 
+        /// How loud a punch that touched nothing is. Zero by default.
+        ///
+        /// A whoosh on every miss sounds right in isolation and wrong in a fight: it is the one
+        /// cue that fires whether or not anything happened, so it stops meaning anything and the
+        /// hits stop standing out against it. Silence on a miss makes a landed punch an event.
+        [Range(0f, 1f)] public float WhiffVolume;
+
         public void Report(HitEvent evt)
         {
             bool playerTookIt = Player != null && evt.Defender == Player;
@@ -101,14 +108,24 @@ namespace TheFighter
                     break;
 
                 case HitResult.Dodged:
-                    Play(_whiff, 0.4f);
+                    // Slipped, so the glove never touched him either.
+                    Whoosh(1.25f);
                     break;
             }
         }
 
         public void ReportWhiff(Fighter fighter, PunchDefinition punch)
         {
-            Play(_whiff, 0.32f);
+            Whoosh(1f);
+        }
+
+        void Whoosh(float scale)
+        {
+            if (WhiffVolume <= 0.001f)
+            {
+                return;
+            }
+            Play(_whiff, WhiffVolume * scale);
         }
 
         void Freeze(float seconds)

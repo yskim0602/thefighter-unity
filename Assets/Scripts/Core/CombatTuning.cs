@@ -34,6 +34,21 @@ namespace TheFighter
         public const float GuardGaugeRegenPerSecond = 14f;
         public const float GuardBreakStunTime = 1.5f;
 
+        // Holding a guard that has nothing left in it.
+        //
+        // The gauge alone made the guard free until the moment it snapped: hold it all round and
+        // the only cost was gas, which regenerates. A real fighter holding his hands up under fire
+        // is taking the punishment through his arms and emptying his tank doing it - so once the
+        // gauge is spent, insisting on the guard costs health directly and burns gas far faster.
+        // The hands also do not come up, which is the other half of the answer: the gauge is a
+        // resource, not a suggestion.
+        public const float GuardSpentHealthPerSecond = 5f;
+        public const float GuardSpentStaminaMultiplier = 2.6f;
+        /// Below this much gauge the drain already starts climbing, so running it to zero is a
+        /// decision you can feel coming rather than a cliff you fall off.
+        public const float GuardStrainRatio = 0.3f;
+        public const float GuardStrainMultiplier = 1.8f;
+
         // --- Weight ---------------------------------------------------------
         // Where the weight is, between the back foot and the front. Boxing's power comes from
         // moving it, not from the arm: a right hand thrown with the weight already forward has

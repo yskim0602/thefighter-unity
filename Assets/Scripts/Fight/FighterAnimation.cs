@@ -450,7 +450,8 @@ namespace TheFighter
             for (int layer = 0; layer < _mixers.Length; layer++)
             {
                 int count = CountOn((Layer)layer);
-                _mixers[layer] = AnimationMixerPlayable.Create(_graph, Mathf.Max(1, count), true);
+                // No normalizeWeights argument: it is obsolete and had no effect anyway.
+                _mixers[layer] = AnimationMixerPlayable.Create(_graph, Mathf.Max(1, count));
                 _graph.Connect(_mixers[layer], 0, _layers, layer);
                 _layers.SetLayerAdditive((uint)layer, false);
                 _layers.SetInputWeight(layer, layer == 0 ? 1f : 0f);
