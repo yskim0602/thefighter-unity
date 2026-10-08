@@ -92,6 +92,29 @@ namespace TheFighter
         /// And of one thrown at the very edge of reach.
         public const float ReachingPower = 0.72f;
 
+        // --- The ready stance ----------------------------------------------
+        // A boxer's legs are never straight. Standing with locked knees reads as a man waiting
+        // for a bus, and it is also mechanically wrong: every push-off, slip and weight transfer
+        // starts from bent knees, so a stance without them has nowhere to move from.
+        /// Metres the hips sit below straight-legged in the ready stance. The knees take it; the
+        /// feet do not move, so this is a crouch the fighter is simply always in.
+        ///
+        /// Small, because the knee is a lever and the geometry near full extension is brutally
+        /// sensitive. For a 1.80m fighter (43cm thigh and shin), measured:
+        ///
+        ///     hip drop   1.0cm   1.5cm   2.0cm   3.0cm   5.5cm   20cm
+        ///     knee bend  17.5    21.4    24.8    30.4    41.2    79.8  degrees
+        ///
+        /// A boxer's ready stance is 15-25 degrees. The first number that looked reasonable as a
+        /// distance, 5.5cm, is a 41-degree squat - so this is picked from the angle, not the drop.
+        public const float StanceKneeBend = 0.018f;
+        /// And he is never still. A waiting boxer rocks gently on those knees - small for the same
+        /// reason: at this operating point +-0.5cm swings the knee about 5 degrees, which reads as
+        /// a live fighter, where +-1.2cm swings it 16 and reads as pumping.
+        public const float StanceRhythm = 0.005f;
+        /// Cycles per second of that rocking.
+        public const float StanceRhythmRate = 1.15f;
+
         // --- Ducking as a technique ----------------------------------------
         // Slip the jab, drop, and go to the body. That sequence is the first real *technique* in
         // the game rather than a button, so the numbers have to make it worth doing: the duck

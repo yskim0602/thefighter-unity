@@ -23,7 +23,27 @@ namespace TheFighter
         /// Knees bend forward. Flip if they hinge backwards on your rig.
         public float KneeForward = 1f;
 
+        /// The bend that is there before any ducking at all. Set 0 to stand straight-legged.
+        public float StanceBend = CombatTuning.StanceKneeBend;
+        /// The ready stance's rocking: metres of travel, and cycles per second.
+        public float Rhythm = CombatTuning.StanceRhythm;
+        public float RhythmRate = CombatTuning.StanceRhythmRate;
+        /// The small forward lean that comes with the stance, before any ducking.
+        public float StancePitch = 2.5f;
+
+        /// What was actually applied this frame, and what it rests at. PostureProbe reads these
+        /// so its "hips are where the stance says" test knows about the stance bend.
+        public float CurrentDrop { get; private set; }
+        public float RestDrop { get { return StanceBend; } }
+
+        float _phase;
         bool _resolved;
+
+        void Awake()
+        {
+            // Two fighters rocking in lockstep looks like one puppet on two strings.
+            _phase = Random.Range(0f, 10f);
+        }
         Transform _hips;
         Transform _spine;
         Transform _leftUpper;
@@ -65,9 +85,35 @@ namespace TheFighter
 
             Resolve();
 
-            float amount = Owner.CrouchAmount;
-            if (amount <= 0.001f || _hips == null || _leftFoot == null || _rightFoot == null)
+            float amount = Mathf.Clamp01(Owner.CrouchAmount);
+            if (_hips == null || _leftFoot == null || _rightFoot == null)
             {
+                CurrentDrop = 0f;
+                return;
+            }
+
+            // Interpolated, not added. The stance bend and the duck are the same joint doing the
+            // same thing by different amounts - adding them would duck 25cm and fold him over.
+            float drop = Mathf.Lerp(StanceBend, HipDrop, amount);
+
+            // The rocking fades out once the feet are working, because the step clips bring their
+            // own motion and two rhythms at once is a limp. It also fades as he ducks: a man under
+            // a punch holds still.
+            float speed = Owner.Motor != null ? Owner.Motor.PlanarSpeed : 0f;
+            float settled = (1f - Mathf.Clamp01(speed / 0.5f)) * (1f - amount);
+            if (settled > 0.001f && Rhythm > 0f)
+            {
+                drop += Rhythm * settled
+                    * Mathf.Sin((Time.time + _phase) * RhythmRate * Mathf.PI * 2f);
+            }
+
+            CurrentDrop = drop;
+
+            bool floored = Owner.State == ActionState.Down
+                || Owner.State == ActionState.KnockedOut;
+            if (floored || Mathf.Abs(drop) < 0.0005f)
+            {
+                CurrentDrop = 0f;
                 return;
             }
 
@@ -76,12 +122,12 @@ namespace TheFighter
             Vector3 rightPlanted = _rightFoot.position;
 
             Transform root = Owner.transform;
-            _hips.position -= root.up * (HipDrop * amount);
+            _hips.position -= root.up * drop;
 
-            if (_spine != null && TorsoPitch != 0f)
+            float pitch = Mathf.Lerp(StancePitch, TorsoPitch, amount);
+            if (_spine != null && pitch != 0f)
             {
-                _spine.rotation = Quaternion.AngleAxis(TorsoPitch * amount, root.right)
-                    * _spine.rotation;
+                _spine.rotation = Quaternion.AngleAxis(pitch, root.right) * _spine.rotation;
             }
 
             Vector3 knee = root.forward * KneeForward;

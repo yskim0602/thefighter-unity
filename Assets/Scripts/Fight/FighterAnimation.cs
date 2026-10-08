@@ -240,6 +240,16 @@ namespace TheFighter
         /// than a tall clip - and a bug here is a fighter hovering over the ring.
         public float FootworkHipLimit = 0.1f;
 
+        /// How much of a step clip's own vertical bob survives. 0 glides, 1 keeps all of it.
+        ///
+        /// Mixamo's step clips are walk cycles, and a walk cycle rises and falls by a stride's
+        /// worth - several centimetres - because a walking man vaults over a straight leg every
+        /// step. Compressed to a shuffle's frequency that becomes a bounce, which is what reads
+        /// as the fighter hopping or jumping while he moves. A boxer never does that: he slides
+        /// his feet and keeps his head on one level, and the reason is tactical rather than
+        /// cosmetic - a head that rises and falls on a rhythm is a head you can time.
+        [Range(0f, 1f)] public float FootworkBob = 0.25f;
+
         [Header("Blending")]
         /// Weights are damped rather than set outright. Without this the stance/footwork mix
         /// follows the AI's frame-to-frame jitter and the skeleton visibly shivers.
@@ -1469,6 +1479,17 @@ namespace TheFighter
             // like weight moving.
             float offset = _baseOffset * FootworkHipLock;
             float corrected = local.y - offset;
+
+            // And then the bob inside the clip, levelled in proportion to how much of the pose a
+            // step clip is actually driving - so standing still keeps the idle's breathing.
+            if (_hipCaptured && FootworkBob < 0.999f)
+            {
+                float level = Mathf.Clamp01(ActiveStepWeight) * (1f - FootworkBob);
+                if (level > 0.001f)
+                {
+                    corrected = Mathf.Lerp(corrected, _hipHeight, level);
+                }
+            }
 
             float strength = HipHeightLock * action;
             if (_hipCaptured && strength > 0.001f)

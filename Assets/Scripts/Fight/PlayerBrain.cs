@@ -103,7 +103,7 @@ namespace TheFighter
                 hand = ClipSide.Left;
                 return true;
             }
-            if (Input.GetKeyDown(KeyCode.M) || Input.GetKeyDown(KeyCode.O))
+            if (Input.GetKeyDown(KeyCode.M))
             {
                 kind = PunchKind.Uppercut;
                 hand = ClipSide.Right;

@@ -160,8 +160,20 @@ namespace TheFighter
 
             // Where the hips *should* be: the stance, lowered by exactly as much as the player is
             // ducking. Anything else is the punch overriding the posture.
-            float drop = _crouch != null ? _crouch.HipDrop : 0.2f;
-            float expected = _stanceHip - Target.CrouchAmount * drop;
+            // The reference was learned standing, so it already contains the stance bend; what
+            // the duck adds on top of it is the difference. Reading CurrentDrop rather than
+            // recomputing it also means the stance's own rocking is expected rather than flagged.
+            float added;
+            if (_crouch != null)
+            {
+                added = _crouch.CurrentDrop - _crouch.RestDrop;
+            }
+            else
+            {
+                added = Target.CrouchAmount * 0.2f;
+            }
+
+            float expected = _stanceHip - added;
             _hipDrift = hipLocal.y - expected;
 
             _footDrift = AnkleHeight(root) - _stanceAnkle;

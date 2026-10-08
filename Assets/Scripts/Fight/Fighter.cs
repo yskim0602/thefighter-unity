@@ -629,7 +629,15 @@ namespace TheFighter
 
             if (!_headHurtboxCaptured)
             {
-                _headHurtboxBase = HeadHurtbox.localPosition;
+                // Lowered once by whatever bend the stance actually has, because the bootstrap
+                // places this volume at a straight-legged height and a boxer is never straight-
+                // legged. Leaving it up there puts the chin that gets hit a few centimetres above
+                // the chin you can see, which is exactly the "punching empty air" the volumes
+                // were shrunk to fix. Asked for rather than assumed: a fighter with no model has
+                // no knees to bend, so there is nothing to subtract.
+                CrouchPose stance = GetComponent<CrouchPose>();
+                float bend = stance != null ? stance.RestDrop : 0f;
+                _headHurtboxBase = HeadHurtbox.localPosition + new Vector3(0f, -bend, 0f);
                 _headHurtboxCaptured = true;
             }
 
